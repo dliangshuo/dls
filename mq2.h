@@ -6,20 +6,21 @@
 #include "math.h"
 
 
-#define MQ2_READ_TIMES	10  //MQ-2传感器ADC循环读取次数
+#define MQ2_READ_TIMES	10  //MQ-2??????ADC??????????
 
-//模式选择	
-//模拟AO:	1
-//数字DO:	0
+//?????	
+//???AO:	1
+//????DO:	0
 #define	MODE 	1
 
-/***************根据自己需求更改****************/
-// MQ-2 GPIO宏定义
+/***************??????????????****************/
+// MQ-2 GPIO????
 #if MODE
-#define		MQ2_AO_GPIO_CLK								RCC_APB2Periph_GPIOA
-#define 	MQ2_AO_GPIO_PORT							GPIOA
+#define		MQ2_AO_GPIO_CLK								RCC_APB2Periph_GPIOC
+#define 	MQ2_AO_GPIO_PORT							GPIOC
+// Use PC0 for MQ2 AO to avoid conflicts with key/UART/WiFi pins.
 #define 	MQ2_AO_GPIO_PIN								GPIO_Pin_0
-#define   ADC_CHANNEL               		ADC_Channel_0	// ADC 通道宏定义
+#define   ADC_CHANNEL               		ADC_Channel_10	// ADC ???????
 
 #else
 #define		MQ2_DO_GPIO_CLK								RCC_APB2Periph_GPIOA
