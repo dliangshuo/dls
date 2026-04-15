@@ -10,6 +10,7 @@
 #include "delay.h"
 #include "adc.h"
 #include "key.h"
+#include "beep.h"
 #include "softiic.h"
 #include <string.h>
 #include <stdio.h>
@@ -25,11 +26,9 @@
 // - ?????(??????): GPIOF_9
 
 // --- ?????? (GPIOB_8) ---
-#define BEEP_PORT        GPIOB
-#define BEEP_PIN         GPIO_Pin_8
-#define BEEP_RCC         RCC_APB2Periph_GPIOB
-#define BEEP_ON()        GPIO_ResetBits(BEEP_PORT, BEEP_PIN)
-#define BEEP_OFF()       GPIO_SetBits(BEEP_PORT, BEEP_PIN)
+// --- ·äÃùÆ÷ (GPIOF_0) ---
+#define BEEP_ON()        BEEP_State(1)
+#define BEEP_OFF()       BEEP_State(0)
 
 // --- ????LED (GPIOB_5, ????????) ---
 #define BOARD_LED_PORT   GPIOB
@@ -330,15 +329,9 @@ static void Human_LED_Init(void)
 
 static void BEEP_Init_Safe(void)
 {
-    GPIO_InitTypeDef GPIO_InitStructure;
-    RCC_APB2PeriphClockCmd(BEEP_RCC, ENABLE);
-    GPIO_InitStructure.GPIO_Pin = BEEP_PIN;
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
-    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-    GPIO_Init(BEEP_PORT, &GPIO_InitStructure);
+    BEEP_Config();
     BEEP_OFF();
 }
-
 static void K_Key_Init(void)
 {
     GPIO_InitTypeDef GPIO_InitStructure;
@@ -782,6 +775,12 @@ static u8 JsonTryGetSwitch(const char *json, const char *key, u8 *out_value)
 {
     char pat_true[32];
     char pat_false[32];
+    char pat_one[32];
+    char pat_zero[32];
+    char pat_str_true[32];
+    char pat_str_false[32];
+    char pat_str_one[32];
+    char pat_str_zero[32];
 
     if (!json || !key || !out_value)
         return 0;
@@ -807,7 +806,6 @@ static u8 JsonTryGetSwitch(const char *json, const char *key, u8 *out_value)
     }
     return 0;
 }
-
 // ???????????????/?????????????????? strstr ???
 static void JsonNormalizeForMatch(char *buf)
 {
