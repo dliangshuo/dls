@@ -459,12 +459,12 @@ static void Send_MQTT_Process(void)
     /* 构建完整 JSON（所有字段一次发出）*/
     snprintf((char *)Pub_Message, sizeof(Pub_Message),
              "{\"TEMP\":%d,\"HUM\":%d,\"MQ2\":%lu,"
-             "\"HUMAN\":%s,\"SERVO\":%s}",
+             "\"HUMAN\":%s}",
              dht11_data[2],
              dht11_data[0],
              (unsigned long)ppm,
              human_status ? "true" : "false",
-             servo_status  ? "true" : "false");
+             //servo_status  ? "true" : "false");
 
     Log_Print("PUB Topic:");
     Log_Print((char *)Pub_Topic);
