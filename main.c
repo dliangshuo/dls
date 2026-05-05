@@ -1,25 +1,3 @@
-/**
- * @file    main.c
- * @brief   STM32 IoT 环境监控系统主程序（完整优化版）
- *
- * 传感器配置：
- *   - DHT11  温湿度传感器
- *   - MQ-2   烟雾/可燃气体传感器（AO 模拟）
- *   - SR602  人体红外传感器（PC4）
- *   - OLED   SSD1306 128x64 显示屏（I2C）
- *   - 蜂鸣器 PF0 高电平触发
- *   - 舵机   PF9 PWM 软件模拟
- *
- * Bug 修复清单（相比原版 main.c）：
- *   Fix-1  Send_MQTT_Process：一次性发送全部字段（原版 5 字段轮发，完整一轮 75s）
- *   Fix-2  Update_SensorData：去掉第二层 IIR 滤波（mq2.c 内已有一层，双重叠加导致严重滞后）
- *   Fix-3  MQTT_WARMUP_MS：从 120s 缩短至 30s，加快首次上报
- *   Fix-4  cnd：用明确的 u8 布尔标志 mqtt_send_pending 替代语义不清的 int cnd
- *
- * ThingCloud MQTT Topic：
- *   上报（PUB）: attributes
- *   下行（SUB）: data/stream/set
- */
 
 #include "stm32f10x.h"
 #include "gpio.h"
@@ -33,31 +11,29 @@
 #include "delay.h"
 #include "adc.h"
 #include "key.h"
-#include "beep.h"
 #include "softiic.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
+#include <stdio.h>
 
-/* ====================== 硬件引脚宏 ====================== */
 
-/* 蜂鸣器（PF0，高电平响） */
 #define BEEP_ON()           BEEP_State(1)
 #define BEEP_OFF()          BEEP_State(0)
 
-/* 板载 LED（PB5，低电平点亮） */
 #define BOARD_LED_PORT      GPIOB
 #define BOARD_LED_PIN       GPIO_Pin_5
 #define BOARD_LED_ON()      GPIO_ResetBits(BOARD_LED_PORT, BOARD_LED_PIN)
 #define BOARD_LED_OFF()     GPIO_SetBits(BOARD_LED_PORT, BOARD_LED_PIN)
 
-/* 人体感应 LED（PE5，低电平点亮） */
+
 #define HUMAN_LED_PORT      GPIOE
 #define HUMAN_LED_PIN       GPIO_Pin_5
 #define HUMAN_LED_RCC       RCC_APB2Periph_GPIOE
 #define HUMAN_LED_ON()      GPIO_ResetBits(HUMAN_LED_PORT, HUMAN_LED_PIN)
 #define HUMAN_LED_OFF()     GPIO_SetBits(HUMAN_LED_PORT, HUMAN_LED_PIN)
 
-/* 按键（PE3=KEY1，PE4=KEY0，低电平有效；PA0=WKUP，高电平有效） */
+
 #define KEY1_PORT           GPIOE
 #define KEY1_PIN            GPIO_Pin_3
 #define KEY0_PORT           GPIOE
@@ -66,42 +42,45 @@
 #define K_KEY_PIN           GPIO_Pin_0
 #define K_KEY_RCC           RCC_APB2Periph_GPIOA
 
-/* 舵机（PF9，软件 PWM） */
-#define SERVO_GPIO_PORT     GPIOF
-#define SERVO_GPIO_PIN      GPIO_Pin_9
-#define SERVO_GPIO_RCC      RCC_APB2Periph_GPIOF
+#define SERVO_GPIO_PORT     GPIOA
+#define SERVO_GPIO_PIN      GPIO_Pin_9  // PB9, TIM4 CH4
 
-/* ====================== 舵机参数 ====================== */
-#define SERVO_ANGLE_MIN         500     /* 0° 脉宽（μs） */
-#define SERVO_ANGLE_MAX         2500    /* 180° 脉宽（μs） */
+// JY003 Fan Module Pin
+#define MOTOR_SIG_PIN       GPIO_Pin_0  // PB0 (避免与WiFi PA4冲突)
+#define MOTOR_SIG_RCC       RCC_APB2Periph_GPIOB
+#define MOTOR_SIG_PORT      GPIOB
+#define SERVO_GPIO_RCC      RCC_APB2Periph_GPIOA
+
+
+#define SERVO_ANGLE_MIN         500     /* 0度 最小脉冲 */
+#define SERVO_ANGLE_MAX         2500    /* 180度 最大脉冲 */
 #define SWEEP_STEP              40
-#define SERVO_CONTINUOUS_MODE   1       /* 1=连续旋转模式, 0=180°来回扫描 */
-#define SERVO_CW_PULSE          1620    /* 连续旋转顺时针脉宽（μs） */
+#define SERVO_CONTINUOUS_MODE   1       /* 连续旋转模式, 0=180度角度扫描 */
+#define SERVO_CW_PULSE          1620    /* 顺时针旋转脉冲 */
 #define SERVO_BOOST_PULSE       1620
 #define SERVO_BOOST_MS          0U
 #define SERVO_UPDATE_DIV        1U
 
-/* ====================== 报警阈值默认值 ====================== */
-#define TEMP_THRESHOLD_ON_DEFAULT    30     /* 温度开启阈值（°C） */
-#define TEMP_THRESHOLD_OFF_DEFAULT   29     /* 温度关闭阈值（°C） */
-#define HUM_ALARM_THRESHOLD_DEFAULT  80     /* 湿度报警阈值（%） */
-#define MQ2_ALARM_THRESHOLD_DEFAULT  500    /* 气体报警阈值（ppm） */
+#define TEMP_THRESHOLD_ON_DEFAULT    30     /* 温度开启阈值 默认°C */
+#define TEMP_THRESHOLD_OFF_DEFAULT   29     /* 温度关闭阈值 默认°C */
+#define HUM_ALARM_THRESHOLD_DEFAULT  80     /* 湿度报警阈值 默认% */
+#define MQ2_ALARM_THRESHOLD_DEFAULT  500    /* MQ2报警阈值 默认ppm */
 
-/* MQ2 计算参数 */
+
 #define MQ2_ADC_MAX             4095UL
-#define MQ2_RL_OHM              5000UL      /* 负载电阻（Ω） */
-#define MQ2_R0_OHM              10000UL     /* 基准电阻（Ω） */
-#define MQ2_CLEAN_AIR_TARGET    200UL       /* 清洁空气基线 ppm */
-#define MQ2_CALIB_SAMPLES       30U         /* 自校准采样次数 */
-#define MQ2_REPORT_MAX          9999UL      /* 上报最大值 */
+#define MQ2_RL_OHM              5000UL      /* 负载电阻 千欧 */
+#define MQ2_R0_OHM              10000UL     /* 标准空气电阻 千欧 */
+#define MQ2_CLEAN_AIR_TARGET    200UL       /* 清洁空气目标 ppm */
+#define MQ2_CALIB_SAMPLES       30U         /* 校准采样次数 */
+#define MQ2_REPORT_MAX          9999UL      /* 报告最大值 */
 
-/* ====================== 任务周期（ms） ====================== */
+
 #define LOOP_TICK_MS        20U
 #define TASK_SENSOR_MS      500U
 #define TASK_HUMAN_MS       100U
 #define TASK_UI_MS          200U
 #define TASK_MQTT_MS        15000U
-#define MQTT_WARMUP_MS      30000U      /* Fix-3：从 120s 缩短至 30s */
+#define MQTT_WARMUP_MS      300U      /* 修复3：原来 120s 改为 30s */
 #define HUMAN_LED_HOLD_MS   3000U
 #define HUMAN_RETRIGGER_MS  2000U
 #define KEY_DEBOUNCE_MS     10U
@@ -123,7 +102,7 @@
 #define MQTT_PUB_TOPIC  "attributes"
 #define MQTT_SUB_TOPIC  "data/stream/set"
 
-/* ====================== 静态变量 ====================== */
+
 static u8  Pub_Topic[]   = MQTT_PUB_TOPIC;
 static u8  Pub_Message[256];
 static u8  check_char[256];
@@ -135,30 +114,21 @@ static u8  temp_threshold_off = TEMP_THRESHOLD_OFF_DEFAULT;
 static u8  hum_alarm_threshold  = HUM_ALARM_THRESHOLD_DEFAULT;
 static u32 mq2_alarm_threshold  = MQ2_ALARM_THRESHOLD_DEFAULT;
 
-/* 舵机状态 */
-static u8  servo_status       = 0;     /* 0=停止, 1=运行 */
-static u8  servo_control_mode = 0;     /* 0=自动（温控）, 1=手动 */
-static u16 servo_curr_pulse   = SERVO_ANGLE_MIN;
-static u8  servo_sweep_dir    = 1;
-static u32 servo_boost_until  = 0;
+static u8  motor_status       = 0;     /* 0=停止, 1=运行 */
+static u8  motor_control_mode = 0;     /* 0=自动控制, 1=手动 */
 
-/* 传感器数据 */
+
 static u8  dht11_data[5]         = {0};
 static u16 mq2_raw               = 0;
-static u32 mq2_baseline          = 0;
-static unsigned long long mq2_cal_sum = 0;
-static u8  mq2_cal_count         = 0;
-static u8  mq2_cal_done          = 0;
 
-/* 远程控制标志 */
+
 static u8  remote_beep_active  = 0;
 static u8  remote_led_active   = 0;
 
-/* Fix-4：用明确的布尔标志替代原来的 int cnd */
 static u8  mqtt_send_pending   = 0;
 static u8  wifi_online         = 0;
 
-/* 系统计时器（ms，由主循环累加） */
+
 extern u32 system_timer;
 static u32 last_dht_time           = 0;
 static u32 last_human_check_time   = 0;
@@ -167,7 +137,6 @@ static u32 last_mqtt_time          = 0;
 static u32 last_ui_time            = 0;
 static u32 last_wifi_retry_time    = 0;
 
-/* 按键状态 */
 static u8  key1_latched    = 0;
 static u8  key0_latched    = 0;
 static u8  k_key_latched   = 0;
@@ -176,14 +145,18 @@ static u8  key_level_ready = 0;
 static u8  key1_idle_level = 1;
 static u8  key0_idle_level = 1;
 
-/* OLED 显示模式：0=传感器数据, 1=阈值设置, 2=状态信息 */
+/* WiFi 重试计数 */
+static u8  wifi_retry_count = 0;
+static u32 wifi_retry_delay = WIFI_RETRY_MS;
+
+/* OLED 显示模式 0=实时数据, 1=设置菜单, 2=设置调整, 3=系统状态, 4=网络信息 */
 static u8  oled_mode       = 0;
-static u8  threshold_index = 0;
+static u8  menu_index      = 0;  // 主菜单索引
+static u8  sub_menu_index  = 0;  // 子菜单索引
 static u32 night_beep_until = 0;
 static u8  human_raw_prev   = 0;
-static u32 last_human_low_time = 0;
 
-/* ====================== 内部函数前置声明 ====================== */
+/* ====================== 函数声明 ====================== */
 static void Log_Print(const char *msg);
 static void Log_ResetReason(void);
 static void SerialBridge_Print(const char *json);
@@ -195,10 +168,8 @@ static u8   IsNightPeriod(void);
 static void Human_LED_Init(void);
 static void BEEP_Init_Safe(void);
 static void K_Key_Init(void);
-static void Servo_Init(void);
-static void Servo_OutputPulse(u16 pulse_us);
-static void Servo_Control(u8 status, u8 mode);
-static void Servo_UpdateSweep(void);
+static void Motor_Init(void);
+static void Motor_Control(u8 status, u8 mode);
 static void Send_MQTT_Process(void);
 static void Update_SensorData(void);
 static void Update_DisplayAndAlarm(void);
@@ -207,11 +178,21 @@ static u8   JsonTryGetSwitch(const char *json, const char *key, u8 *out_value);
 static void JsonNormalizeForMatch(char *buf);
 static void Handle_WifiCommand(void);
 
-/* ====================== 日志/串口 ====================== */
+/* ====================== 日志/调试 ====================== */
 
 static void Log_Print(const char *msg)
 {
     USART1_SendStr((char *)msg, strlen(msg));
+}
+
+static void Log_Printf(const char *fmt, ...)
+{
+    char buf[128];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    Log_Print(buf);
 }
 
 static void Log_ResetReason(void)
@@ -275,7 +256,7 @@ static u8 Wifi_Bringup(void)
     return 0;
 }
 
-/* ====================== 工具函数 ====================== */
+/* ====================== 时间管理 ====================== */
 
 static u8 IsTimeDue(u32 now, u32 *last_time, u32 period_ms)
 {
@@ -330,10 +311,62 @@ static void Human_LED_Init(void)
     HUMAN_LED_OFF();
 }
 
+static void BEEP_Config(void);
+static void BEEP_State(u8 state);
+
 static void BEEP_Init_Safe(void)
 {
     BEEP_Config();
     BEEP_OFF();
+}
+
+static void BEEP_Config(void)
+{
+    GPIO_InitTypeDef GPIO_InitStructure;
+    TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure;
+    TIM_OCInitTypeDef TIM_OCInitStructure;
+
+    // GPIO 配置为复用推挽输出（TIM3 CH3）
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
+    GPIO_InitStructure.GPIO_Pin   = GPIO_Pin_0;
+    GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_AF_PP;
+    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_Init(GPIOB, &GPIO_InitStructure);
+
+    // TIM3 时钟功能
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE);
+
+    // TIM3 配置：2kHz PWM（适合蜂鸣器）
+    TIM_TimeBaseStructure.TIM_Period = 500 - 1;  // 1MHz / 500 = 2kHz
+    TIM_TimeBaseStructure.TIM_Prescaler = 72 - 1;
+    TIM_TimeBaseStructure.TIM_ClockDivision = 0;
+    TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
+    TIM_TimeBaseInit(TIM3, &TIM_TimeBaseStructure);
+
+    // PWM 模式配置
+    TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
+    TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
+    TIM_OCInitStructure.TIM_Pulse = 0;  // 榛樿鍏抽棴
+    TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
+    TIM_OC3Init(TIM3, &TIM_OCInitStructure);
+
+    TIM_OC3PreloadConfig(TIM3, TIM_OCPreload_Enable);
+    TIM_ARRPreloadConfig(TIM3, ENABLE);
+
+    TIM_Cmd(TIM3, ENABLE);
+}
+
+static void BEEP_State(u8 state)
+{
+    if (state == 1)
+    {
+        TIM_SetCompare3(TIM3, 250);  // 50% 鍗犵┖姣旓紝杩炵画铚傞福
+        TIM_Cmd(TIM3, ENABLE);
+    }
+    else
+    {
+        TIM_Cmd(TIM3, DISABLE);   // 安全关闭定时器
+    }
 }
 
 static void K_Key_Init(void)
@@ -347,106 +380,38 @@ static void K_Key_Init(void)
     GPIO_Init(K_KEY_PORT, &GPIO_InitStructure);
 }
 
-static void Servo_Init(void)
+static void Motor_Init(void)
 {
     GPIO_InitTypeDef GPIO_InitStructure;
 
-    RCC_APB2PeriphClockCmd(SERVO_GPIO_RCC, ENABLE);
-    GPIO_InitStructure.GPIO_Pin   = SERVO_GPIO_PIN;
+    RCC_APB2PeriphClockCmd(MOTOR_SIG_RCC, ENABLE);
+    GPIO_InitStructure.GPIO_Pin   = MOTOR_SIG_PIN;
     GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_Out_PP;
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-    GPIO_Init(SERVO_GPIO_PORT, &GPIO_InitStructure);
-    GPIO_ResetBits(SERVO_GPIO_PORT, SERVO_GPIO_PIN);
+    GPIO_Init(MOTOR_SIG_PORT, &GPIO_InitStructure);
+
+    // 榛樿鍏抽棴
+    Motor_Control(0, 0);
 }
 
-/* ====================== 舵机控制 ====================== */
+/* ====================== 电机控制 ====================== */
 
-static void Servo_OutputPulse(u16 pulse_us)
+static void Motor_Control(u8 status, u8 mode)
 {
-    GPIO_SetBits(SERVO_GPIO_PORT, SERVO_GPIO_PIN);
-    DELAY_Nus(pulse_us);
-    GPIO_ResetBits(SERVO_GPIO_PORT, SERVO_GPIO_PIN);
-}
-
-static void Servo_Control(u8 status, u8 mode)
-{
-    if (servo_status != status || servo_control_mode != mode)
+    if (status == 0)
     {
-        Log_Print(mode ? "Servo: Manual Mode\r\n" : "Servo: Auto Mode\r\n");
-        Log_Print(status ? "Action: SWEEP ON\r\n" : "Action: OFF\r\n");
-    }
-
-    servo_status       = status;
-    servo_control_mode = mode;
-
-    if (status == 1)
-        servo_boost_until = system_timer + SERVO_BOOST_MS;
-    else
-        servo_boost_until = 0;
-}
-
-static void Servo_UpdateSweep(void)
-{
-    u16 target_pulse = servo_curr_pulse;
-    static u8 servo_div_cnt = 0;
-
-#if SERVO_CONTINUOUS_MODE
-    if (servo_status == 1)
-    {
-        target_pulse = (system_timer < servo_boost_until) ? SERVO_BOOST_PULSE : SERVO_CW_PULSE;
+        GPIO_ResetBits(MOTOR_SIG_PORT, MOTOR_SIG_PIN);  // 关闭风扇
     }
     else
     {
-        servo_div_cnt = 0;
-        GPIO_ResetBits(SERVO_GPIO_PORT, SERVO_GPIO_PIN);
-        return;
+        GPIO_SetBits(MOTOR_SIG_PORT, MOTOR_SIG_PIN);    // 开启风扇
     }
-#else
-    if (servo_status == 1)
-    {
-        if (servo_sweep_dir == 1)
-        {
-            servo_curr_pulse += SWEEP_STEP;
-            if (servo_curr_pulse >= SERVO_ANGLE_MAX)
-            {
-                servo_curr_pulse = SERVO_ANGLE_MAX;
-                servo_sweep_dir  = 0;
-            }
-        }
-        else
-        {
-            if (servo_curr_pulse > (SERVO_ANGLE_MIN + SWEEP_STEP))
-                servo_curr_pulse -= SWEEP_STEP;
-            else
-            {
-                servo_curr_pulse = SERVO_ANGLE_MIN;
-                servo_sweep_dir  = 1;
-            }
-        }
-        target_pulse = servo_curr_pulse;
-    }
-    else
-    {
-        if (servo_curr_pulse != SERVO_ANGLE_MIN)
-            servo_curr_pulse = SERVO_ANGLE_MIN;
-        target_pulse = SERVO_ANGLE_MIN;
-    }
-#endif
-
-    servo_div_cnt++;
-    if (servo_div_cnt < SERVO_UPDATE_DIV)
-        return;
-    servo_div_cnt = 0;
-
-    Servo_OutputPulse(target_pulse);
 }
 
-/* ====================== Fix-1：MQTT 发送（单条 JSON 包含全部字段）====================== */
+/* ====================== 修复1：MQTT 发送优化，确保 JSON 数据完整发送 ====================== */
 /**
- * 原版每次调用仅发送 1 个字段（5 字段轮转），完整一轮需 5×15s=75s，
- * 导致云端同一时刻的 TEMP/HUM/MQ2/HUMAN/SERVO 来自不同时刻的采样值。
- *
- * 修复后：每次触发将所有字段打包为一条 JSON，确保云端数据时序一致。
+ * 原问题：每次发送只发送1个数据段，5个数据轮流发送，导致同一时刻 TEMP/HUM/MQ2/HUMAN/SERVO 五个数据不同时发送
+ * 修复后：每次发送包含所有数据段的 JSON，确保同时发送所有数据
  */
 static void Send_MQTT_Process(void)
 {
@@ -456,15 +421,14 @@ static void Send_MQTT_Process(void)
     if (!mqtt_send_pending)
         return;
 
-    /* 构建完整 JSON（所有字段一次发出）*/
+    /* 构建完整的 JSON 数据，一次性发送*/
     snprintf((char *)Pub_Message, sizeof(Pub_Message),
              "{\"TEMP\":%d,\"HUM\":%d,\"MQ2\":%lu,"
              "\"HUMAN\":%s}",
              dht11_data[2],
              dht11_data[0],
              (unsigned long)ppm,
-             human_status ? "true" : "false",
-             //servo_status  ? "true" : "false");
+             human_status ? "true" : "false");
 
     Log_Print("PUB Topic:");
     Log_Print((char *)Pub_Topic);
@@ -474,7 +438,7 @@ static void Send_MQTT_Process(void)
 
     SerialBridge_Print((char *)Pub_Message);
 
-    /* 编码 MQTT PUBLISH 报文 */
+    /* 发送 MQTT PUBLISH 命令 */
     pkt_len = MqttPublishData((char *)Pub_Topic,
                               (char *)Pub_Message,
                               strlen((char *)Pub_Message));
@@ -485,7 +449,7 @@ static void Send_MQTT_Process(void)
         return;
     }
 
-    /* 发送 AT 指令 */
+    /* 发送 AT 命令 */
     snprintf(at_buf, sizeof(at_buf), "AT+CIPSEND=%d\r\n", pkt_len);
     if (cmdAT(at_buf, "OK", ">", strlen(at_buf)))
     {
@@ -499,69 +463,54 @@ static void Send_MQTT_Process(void)
         Log_Print("AT+CIPSEND No Response\r\n");
     }
 
-    mqtt_send_pending = 0;  /* 清标志，等待下一次定时触发 */
+    mqtt_send_pending = 0;  /* 重置发送标志 */
 }
 
-/* ====================== Fix-2：传感器采集（去掉第二层 IIR）====================== */
-/**
- * 原版在 mq2.c 的 MQ2_GetData_PPM() 中已有一层 IIR（α=0.8/0.2），
- * 此处又叠加了第二层（α=0.75/0.25），双重滤波导致气体浓度变化
- * 需数分钟才能反映到上报值，严重滞后。
- *
- * 修复后：去掉本层 IIR，直接使用 mq2.c 输出的已滤波值。
- */
 static void Update_SensorData(void)
 {
     u32 mq2_raw_ppm;
     u32 mq2_corrected;
     u8  i;
 
-    /* 读取 DHT11（最多重试 3 次）*/
+    /* 读取 DHT11传感器数据 尝试3次 */
     for (i = 0; i < 3; i++)
     {
         if (DHT11_Getdata() == 0)
         {
-            dht11_data[0] = data[0];   /* 湿度整数 */
-            dht11_data[2] = data[2];   /* 温度整数 */
+            dht11_data[0] = data[0];   /* 湿度数据 */
+            dht11_data[2] = data[2];   /* 温度数据 */
             break;
         }
         DELAY_Nms(20);
     }
 
-    /* 读取 MQ2（mq2.c 内已完成一层 IIR 低通）*/
+    /* 读取 MQ2 从mq2.c 获取数据，已有 IIR 滤波 */
     mq2_raw     = MQ2_GetData();
     mq2_raw_ppm = (u32)MQ2_GetData_PPM();
 
-    /* 溢出保护 */
+    /* 校准计算 */
     if (mq2_raw_ppm > 1000000UL)
         mq2_raw_ppm = (u32)mq2_raw * 100UL;
 
-    /* 自校准基线（开机前 MQ2_CALIB_SAMPLES 次采样求均值）*/
-    if (!mq2_cal_done)
-    {
-        mq2_cal_sum += mq2_raw_ppm;
-        mq2_cal_count++;
-        if (mq2_cal_count >= MQ2_CALIB_SAMPLES)
-        {
-            u32 avg  = (u32)(mq2_cal_sum / mq2_cal_count);
-            mq2_baseline = (avg > MQ2_CLEAN_AIR_TARGET)
-                           ? (avg - MQ2_CLEAN_AIR_TARGET) : 0;
-            mq2_cal_done = 1;
-            Log_Print("MQ2 Baseline OK\r\n");
-        }
-    }
-
-    /* 基线修正 + 上限截断 */
-    mq2_corrected = (mq2_raw_ppm > mq2_baseline)
-                    ? (mq2_raw_ppm - mq2_baseline) : 0;
+    mq2_corrected = mq2_raw_ppm;
     if (mq2_corrected > MQ2_REPORT_MAX)
         mq2_corrected = MQ2_REPORT_MAX;
 
-    /* Fix-2：直接赋值，不再叠加第二层 IIR */
+
     ppm = mq2_corrected;
+
+    /* 测试打印 MQ2 ADC 和 PPM */
+    static u32 last_print_time = 0;
+    if (system_timer - last_print_time > 5000)  // 每5秒打印一次
+    {
+        Log_Printf("MQ2 ADC: %d, PPM: %lu\r\n", mq2_raw, ppm);
+        last_print_time = system_timer;
+    }
 }
 
-/* ====================== OLED 显示 + 蜂鸣器报警 ====================== */
+/* ====================== MQ2 自动校准 ====================== */
+
+/* ====================== OLED 显示 + 报警控制 ====================== */
 
 static void Update_DisplayAndAlarm(void)
 {
@@ -570,9 +519,12 @@ static void Update_DisplayAndAlarm(void)
     static u8 prev_oled_mode = 0xFF;
 
     u8 night_human_alarm = (system_timer < night_beep_until) ? 1 : 0;
-    u8 alarm_trigger = (dht11_data[2] >= temp_threshold_on  ||
-                        dht11_data[0] >  hum_alarm_threshold ||
-                        ppm           >  mq2_alarm_threshold ||
+    u8 temp_valid = (dht11_data[2] >= 5 && dht11_data[2] <= 50);
+    u8 hum_valid = (dht11_data[0] >= 10 && dht11_data[0] <= 90);
+    u8 mq2_valid = 1;  // 鏆傛椂璁句负鏈夋晥
+    u8 alarm_trigger = ((temp_valid && dht11_data[2] >= temp_threshold_on)  ||
+                        (hum_valid && dht11_data[0] >  hum_alarm_threshold) ||
+                        (mq2_valid && ppm           >  mq2_alarm_threshold) ||
                         night_human_alarm);
 
     if (alarm_trigger || remote_beep_active)
@@ -588,7 +540,7 @@ static void Update_DisplayAndAlarm(void)
 
     FormatClockString(time_str, sizeof(time_str));
 
-    /* 模式 0：传感器实时数据 */
+    /* 模式 0：显示实时数据 */
     if (oled_mode == 0)
     {
         OLED_ShowString(0, 0,  (u8 *)"TIME:");
@@ -603,36 +555,66 @@ static void Update_DisplayAndAlarm(void)
         snprintf(buf, sizeof(buf), "MQ2 :%lu    ", (unsigned long)ppm);
         OLED_ShowString(6, 0, (u8 *)buf);
     }
-    /* 模式 1：阈值设置 */
+    /* 模式 1：设置菜单 */
     else if (oled_mode == 1)
     {
-        snprintf(buf, sizeof(buf), "TEMP:%d   ", temp_threshold_on);
-        OLED_ShowString(0, 16, (u8 *)buf);
-
-        snprintf(buf, sizeof(buf), "HUM :%d   ", hum_alarm_threshold);
-        OLED_ShowString(2, 16, (u8 *)buf);
-
-        snprintf(buf, sizeof(buf), "MQ2 :%lu  ", (unsigned long)mq2_alarm_threshold);
-        OLED_ShowString(4, 16, (u8 *)buf);
-
-        /* 光标指示 */
-        OLED_ShowString(0, 0, (u8 *)(threshold_index == 0 ? ">" : " "));
-        OLED_ShowString(2, 0, (u8 *)(threshold_index == 1 ? ">" : " "));
-        OLED_ShowString(4, 0, (u8 *)(threshold_index == 2 ? ">" : " "));
+        OLED_ShowString(0, 0, (u8 *)"Settings Menu");
+        OLED_ShowString(2, 0, (u8 *)(menu_index == 0 ? ">" : " ") );
+        OLED_ShowString(2, 16, (u8 *)"Temp Threshold");
+        OLED_ShowString(4, 0, (u8 *)(menu_index == 1 ? ">" : " ") );
+        OLED_ShowString(4, 16, (u8 *)"Hum Threshold");
+        OLED_ShowString(6, 0, (u8 *)(menu_index == 2 ? ">" : " ") );
+        OLED_ShowString(6, 16, (u8 *)"MQ2 Threshold");
     }
-    /* 模式 2：执行器状态 */
+    /* 模式 2：设置调整 */
     else if (oled_mode == 2)
     {
-        sprintf(buf, "SERVO:%s", servo_status ? "ON"     : "OFF");
-        OLED_ShowString(0, 0, (u8 *)buf);
-
-        sprintf(buf, "HUMAN:%s", human_status ? "YES"   : "NO");
+        if (sub_menu_index == 0)
+        {
+            snprintf(buf, sizeof(buf), "TEMP:%d   ", temp_threshold_on);
+            OLED_ShowString(0, 16, (u8 *)buf);
+            OLED_ShowString(2, 0, (u8 *)"Use KEY0/1 to adjust");
+            OLED_ShowString(4, 0, (u8 *)"KEY1: +  KEY0: -");
+        }
+        else if (sub_menu_index == 1)
+        {
+            snprintf(buf, sizeof(buf), "HUM :%d   ", hum_alarm_threshold);
+            OLED_ShowString(0, 16, (u8 *)buf);
+            OLED_ShowString(2, 0, (u8 *)"Use KEY0/1 to adjust");
+            OLED_ShowString(4, 0, (u8 *)"KEY1: +  KEY0: -");
+        }
+        else if (sub_menu_index == 2)
+        {
+            snprintf(buf, sizeof(buf), "MQ2 :%lu  ", (unsigned long)mq2_alarm_threshold);
+            OLED_ShowString(0, 16, (u8 *)buf);
+            OLED_ShowString(2, 0, (u8 *)"Use KEY0/1 to adjust");
+            OLED_ShowString(4, 0, (u8 *)"KEY1: +  KEY0: -");
+        }
+    }
+    /* 模式 3：系统状态 */
+    else if (oled_mode == 3)
+    {
+        OLED_ShowString(0, 0, (u8 *)"System Status");
+        sprintf(buf, "SERVO:%s", motor_status ? "ON"     : "OFF");
         OLED_ShowString(2, 0, (u8 *)buf);
 
-        sprintf(buf, "MODE :%s", servo_control_mode ? "MANUAL" : "AUTO");
+        sprintf(buf, "HUMAN:%s", human_status ? "YES"   : "NO");
         OLED_ShowString(4, 0, (u8 *)buf);
 
-        OLED_ShowString(6, 0, (u8 *)"                ");
+        sprintf(buf, "MODE :%s", motor_control_mode ? "MANUAL" : "AUTO");
+        OLED_ShowString(6, 0, (u8 *)buf);
+    }
+    /* 模式 4：网络信息 */
+    else if (oled_mode == 4)
+    {
+        OLED_ShowString(0, 0, (u8 *)"Network Info");
+        sprintf(buf, "WiFi:%s", wifi_online ? "ONLINE" : "OFFLINE");
+        OLED_ShowString(2, 0, (u8 *)buf);
+
+        sprintf(buf, "MQTT:%s", mqtt_send_pending ? "PENDING" : "IDLE");
+        OLED_ShowString(4, 0, (u8 *)buf);
+
+        OLED_ShowString(6, 0, (u8 *)"Press KEY to exit");
     }
 }
 
@@ -649,7 +631,7 @@ static void Handle_Keys(void)
     if (!key_level_ready)
         key_level_ready = 1;
 
-    /* KEY0 + KEY1 同时按下：切换 OLED 页面 */
+    /* KEY0 + KEY1 同时按下，切换 OLED 页面 */
     if (key1_pressed && key0_pressed)
     {
         if (!key_combo_latched)
@@ -658,24 +640,9 @@ static void Handle_Keys(void)
             if ((GPIO_ReadInputDataBit(KEY1_PORT, KEY1_PIN) != key1_idle_level) &&
                 (GPIO_ReadInputDataBit(KEY0_PORT, KEY0_PIN) != key0_idle_level))
             {
-                if (oled_mode == 0)
-                {
-                    oled_mode = 1;
-                    threshold_index = 0;
-                }
-                else if (oled_mode == 1)
-                {
-                    threshold_index++;
-                    if (threshold_index > 2)
-                    {
-                        threshold_index = 0;
-                        oled_mode = 2;
-                    }
-                }
-                else
-                {
-                    oled_mode = 0;
-                }
+                oled_mode = (oled_mode + 1) % 5;  // 寰幆 0-4
+                menu_index = 0;
+                sub_menu_index = 0;
                 key_combo_latched = 1;
             }
         }
@@ -688,51 +655,60 @@ static void Handle_Keys(void)
     if (key1_pressed && key0_pressed)
         return;
 
-    /* KEY1：值增加 / 舵机开 */
+    /* KEY1：增加 / 菜单导航 */
     if (key1_pressed && !key1_latched)
     {
         DELAY_Nms(KEY_DEBOUNCE_MS);
-        if (oled_mode == 1)
+        if (oled_mode == 1)  // 菜单导航
         {
-            if (threshold_index == 0 && temp_threshold_on < 60)
+            menu_index = (menu_index + 1) % 3;
+        }
+        else if (oled_mode == 2)  // 设置调整
+        {
+            if (sub_menu_index == 0 && temp_threshold_on < 60)
                 temp_threshold_on++;
-            else if (threshold_index == 1 && hum_alarm_threshold < 99)
+            else if (sub_menu_index == 1 && hum_alarm_threshold < 99)
                 hum_alarm_threshold++;
-            else if (threshold_index == 2 && mq2_alarm_threshold < 10000)
+            else if (sub_menu_index == 2 && mq2_alarm_threshold < 10000)
                 mq2_alarm_threshold += 50;
         }
-        else if (oled_mode == 2)
+        else if (oled_mode == 3)  // 系统状态
         {
-            Servo_Control(1, 1);
+            Motor_Control(1, 1);
         }
         key1_latched = 1;
     }
     else if (!key1_pressed)
         key1_latched = 0;
 
-    /* KEY0：值减少 / 舵机关 */
+    /* KEY0：减少 / 菜单选择 */
     if (key0_pressed && !key0_latched)
     {
         DELAY_Nms(KEY_DEBOUNCE_MS);
-        if (oled_mode == 1)
+        if (oled_mode == 1)  // 菜单选择
         {
-            if (threshold_index == 0 && temp_threshold_on > 5)
+            sub_menu_index = menu_index;  // 选择当前菜单项
+            oled_mode = 2;  // 杩涘叆璁剧疆椤甸潰
+        }
+        else if (oled_mode == 2)  // 设置调整
+        {
+            if (sub_menu_index == 0 && temp_threshold_on > 5)
                 temp_threshold_on--;
-            else if (threshold_index == 1 && hum_alarm_threshold > 20)
+            else if (sub_menu_index == 1 && hum_alarm_threshold > 20)
                 hum_alarm_threshold--;
-            else if (threshold_index == 2 && mq2_alarm_threshold > 100)
+            else if (sub_menu_index == 2 && mq2_alarm_threshold > 100)
                 mq2_alarm_threshold -= 50;
         }
-        else if (oled_mode == 2)
+        else if (oled_mode == 3)  // 系统状态
         {
-            Servo_Control(0, 1);
+            Motor_Control(0, 1);
         }
         key0_latched = 1;
     }
     else if (!key0_pressed)
         key0_latched = 0;
 
-    /* K_KEY（WKUP）：高电平触发，切换 OLED 页面 */
+    /* K_KEY锛圵KUP锛夊垏鎹? OLED 椤甸潰 */
     if (GPIO_ReadInputDataBit(K_KEY_PORT, K_KEY_PIN))
     {
         if (!k_key_latched)
@@ -740,24 +716,9 @@ static void Handle_Keys(void)
             DELAY_Nms(KEY_DEBOUNCE_MS);
             if (GPIO_ReadInputDataBit(K_KEY_PORT, K_KEY_PIN))
             {
-                if (oled_mode == 0)
-                {
-                    oled_mode = 1;
-                    threshold_index = 0;
-                }
-                else if (oled_mode == 1)
-                {
-                    threshold_index++;
-                    if (threshold_index > 2)
-                    {
-                        threshold_index = 0;
-                        oled_mode = 2;
-                    }
-                }
-                else
-                {
-                    oled_mode = 0;
-                }
+                oled_mode = (oled_mode + 1) % 5;  // 寰幆 0-4
+                menu_index = 0;
+                sub_menu_index = 0;
                 k_key_latched = 1;
             }
         }
@@ -768,11 +729,11 @@ static void Handle_Keys(void)
     }
 }
 
-/* ====================== ThingCloud 下行指令解析 ====================== */
+/* ====================== ThingCloud 下行命令处理 ====================== */
 
 /**
- * @brief  从 JSON 字符串中解析布尔型开关值
- * @retval 1=找到并解析成功, 0=未找到
+ * @brief  从 JSON 字符串中解析开关值
+ * @retval 1=解析成功，0=未找到
  */
 static u8 JsonTryGetSwitch(const char *json, const char *key, u8 *out_value)
 {
@@ -809,7 +770,7 @@ static u8 JsonTryGetSwitch(const char *json, const char *key, u8 *out_value)
 }
 
 /**
- * @brief  去除 JSON 字符串中的空白符和转义符，方便 strstr 匹配
+ * @brief  去除 JSON 字符串中的空白符和转义符，便于 strstr 匹配
  */
 static void JsonNormalizeForMatch(char *buf)
 {
@@ -828,14 +789,7 @@ static void JsonNormalizeForMatch(char *buf)
     buf[w] = '\0';
 }
 
-/**
- * @brief  处理 Wi-Fi 串口下行数据（ThingCloud MQTT 下行指令）
- *
- * 支持的控制字段（JSON 键名）：
- *   BEEP   : 0/1  蜂鸣器远程控制
- *   LED    : 0/1  板载 LED 远程控制
- *   SERVO  : 0/1  舵机远程控制
- */
+
 static void Handle_WifiCommand(void)
 {
     u16 copy_len;
@@ -870,7 +824,7 @@ static void Handle_WifiCommand(void)
 
     cmd_val = 0;
     if (JsonTryGetSwitch((char *)check_char, "SERVO", &cmd_val))
-        Servo_Control(cmd_val, 1);
+        Motor_Control(cmd_val, 1);
 
     wifiRecvOver = 0;
     recvCnt      = 0;
@@ -880,13 +834,13 @@ static void Handle_WifiCommand(void)
 
 int main(void)
 {
-    /* ---------- 中断优先级分组（必须最先设置）---------- */
+    /* ---------- 系统时钟和中断优先级 ---------- */
     NVIC_SetPriorityGrouping(2);
 
-    /* ---------- 外设初始化（与原工程顺序一致）---------- */
+    /* ---------- 硬件初始化 ---------- */
     LED_Config();
     KEY_Config();
-    USART1_Config(115200);          /* 注意：工程中用 USART1_Config，非 USART1_Init */
+    USART1_Config(115200);          /* 注意：这里调用 USART1_Config 实际是 USART1_Init */
     DELAY_Nms(100);
 
     Log_Print("\r\n\r\n----BOOT----\r\n");
@@ -896,7 +850,7 @@ int main(void)
     OLED_Config();
     OLED_Clear(0);
 
-    /* OLED 固定标签 */
+    /* OLED 显示标签 */
     OLED_ShowString(0, 0, (u8 *)"TIME:");
     OLED_ShowString(2, 0, (u8 *)"TEMP:");
     OLED_ShowString(4, 0, (u8 *)"HUM :");
@@ -905,15 +859,15 @@ int main(void)
     BOARD_LED_OFF();
     BEEP_Init_Safe();
 
-    DHT11_Config();                 /* 注意：工程中用 DHT11_Config，非 DHT11_Init */
-    ADCx_Init();                    /* MQ2 依赖 ADC，需在 MQ2_Init 之前调用 */
+    DHT11_Config();                 /* 注意：这里调用 DHT11_Config 实际是 DHT11_Init */
+    ADCx_Init();                    /* MQ2 传感器 ADC 初始化，必须在 MQ2_Init 之前调用 */
     MQ2_Init();
     SR602_Init();
-    Servo_Init();
+    Motor_Init();
     Human_LED_Init();
     K_Key_Init();
 
-    /* 首次采样，避免开机时显示全 0 */
+    /* 首次更新传感器数据，开机时显示全 0 */
     Update_SensorData();
 
     Log_Print("System Init OK\r\n");
@@ -934,11 +888,11 @@ int main(void)
         DELAY_Nms(LOOP_TICK_MS);
         system_timer += LOOP_TICK_MS;
 
-        /* --- 传感器采集（500ms）--- */
+        /* --- 传感器数据更新 每500ms --- */
         if (IsTimeDue(system_timer, &last_dht_time, TASK_SENSOR_MS))
             Update_SensorData();
 
-        /* --- 人体感应检测（100ms）--- */
+        /* --- 人体检测 每100ms --- */
         if (IsTimeDue(system_timer, &last_human_check_time, TASK_HUMAN_MS))
         {
             u8 human_raw = SR602_Detect() ? 1 : 0;
@@ -946,7 +900,7 @@ int main(void)
 
             if (!human_raw)
             {
-                last_human_low_time = system_timer;
+                // last_human_low_time = system_timer;  // 删除未使用
             }
             else
             {
@@ -961,51 +915,68 @@ int main(void)
             human_raw_prev = human_raw;
         }
 
-        /* 人体感应 LED 保持亮起（检测后保持 HUMAN_LED_HOLD_MS）*/
+        /* 人体检测 LED 控制，保持 HUMAN_LED_HOLD_MS */
         if ((system_timer - last_human_detect_time) < HUMAN_LED_HOLD_MS)
             HUMAN_LED_ON();
         else
             HUMAN_LED_OFF();
 
-        /* --- 温控舵机（自动模式）--- */
-        if (servo_control_mode == 0)
+        /* --- 自动控制电机 --- */
+        if (motor_control_mode == 0)
         {
-            if (dht11_data[2] >= temp_threshold_on && servo_status == 0)
-                Servo_Control(1, 0);
-            else if (dht11_data[2] <= temp_threshold_off && servo_status == 1)
-                Servo_Control(0, 0);
+            if (dht11_data[2] >= temp_threshold_on && motor_status == 0)
+                Motor_Control(1, 0);
+            else if (dht11_data[2] <= temp_threshold_off && motor_status == 1)
+                Motor_Control(0, 0);
         }
 
-        Servo_UpdateSweep();
-
-        /* --- OLED 刷新 + 蜂鸣器（200ms）--- */
+        /* --- OLED 刷新 + 报警控制 每200ms --- */
         if (IsTimeDue(system_timer, &last_ui_time, TASK_UI_MS))
             Update_DisplayAndAlarm();
 
         /* --- 按键扫描 --- */
         Handle_Keys();
 
-        /* --- MQTT 上报（Fix-3：暖机 30s 后，每 15s 触发一次）--- */
+        /* --- MQTT 发送 修复3：预热 30s 后每 15s 发送一次 --- */
         if (wifi_online &&
             system_timer >= MQTT_WARMUP_MS &&
             IsTimeDue(system_timer, &last_mqtt_time, TASK_MQTT_MS))
         {
-            /* Fix-4：使用布尔标志，而非原版的 int cnd */
+            /* 修复4：使用条件日志，避免原有的 int cnd */
             if (!mqtt_send_pending)
                 mqtt_send_pending = 1;
         }
 
-        /* --- Wi-Fi 任务 --- */
+        /* --- Wi-Fi 命令处理 --- */
         if (wifi_online)
         {
             Handle_WifiCommand();
             Send_MQTT_Process();
+            wifi_retry_count = 0;  // 閲嶇疆閲嶈繛璁℃暟
+            wifi_retry_delay = WIFI_RETRY_MS;  // 閲嶇疆寤惰繜
         }
         else
         {
 #if WIFI_AUTO_BRINGUP
-            if (IsTimeDue(system_timer, &last_wifi_retry_time, WIFI_RETRY_MS))
-                wifi_online = Wifi_Bringup();
+            if (IsTimeDue(system_timer, &last_wifi_retry_time, wifi_retry_delay))
+            {
+                if (Wifi_Bringup())
+                {
+                    wifi_online = 1;
+                    wifi_retry_count = 0;
+                    wifi_retry_delay = WIFI_RETRY_MS;
+                    Log_Print("WiFi Reconnected\r\n");
+                }
+                else
+                {
+                    wifi_retry_count++;
+                    // 指数退避，最多 5 分钟
+                    wifi_retry_delay = WIFI_RETRY_MS * (1 << (wifi_retry_count > 4 ? 4 : wifi_retry_count));
+                    if (wifi_retry_delay > 300000UL) wifi_retry_delay = 300000UL;
+                    Log_Print("WiFi Retry Failed, next in ");
+                    // 鍙互娣诲姞寤惰繜鏄剧ず
+                }
+            }
 #endif
         }
     }
