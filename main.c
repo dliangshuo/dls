@@ -1,5 +1,9 @@
 
 #include "stm32f10x.h"
+#include "stm32f10x_gpio.h"
+#include "stm32f10x_rcc.h"
+#include "stm32f10x_tim.h"
+#include <stdint.h>
 #include "gpio.h"
 #include "usart.h"
 #include "oled.h"
@@ -79,7 +83,7 @@
 #define TASK_SENSOR_MS      500U
 #define TASK_HUMAN_MS       100U
 #define TASK_UI_MS          200U
-#define TASK_MQTT_MS        15000U
+#define TASK_MQTT_MS        30000U   // MQTT上报周期延长为30秒，减少串口发送频率
 #define MQTT_WARMUP_MS      300U      /* 修复3：原来 120s 改为 30s */
 #define HUMAN_LED_HOLD_MS   3000U
 #define HUMAN_RETRIGGER_MS  2000U
@@ -227,12 +231,12 @@ static u8 Wifi_Bringup(void)
 
     for (i = 0; i < WIFI_INIT_RETRY; i++)
     {
-        Log_Print("WiFi Bringup...\r\n");
+        Log_Print("[WiFi] Bringup...\r\n");
         UART_Init();
 
-        if (!cmdAT("AT\r\n", "OK", NULL, 4))
+        if (!cmdAT("AT", "OK", NULL, 2))
         {
-            Log_Print("AT No Response\r\n");
+            Log_Print("[WiFi] AT No Response\r\n");
             DELAY_Nms(300);
             continue;
         }
@@ -241,17 +245,17 @@ static u8 Wifi_Bringup(void)
 
         if (TCP_Init() == 1)
         {
-            Log_Print("TCP Connected\r\n");
-            Log_Print("NET Ready -> MQTT/Downlink Enabled\r\n");
+            Log_Print("[WiFi] TCP Connected\r\n");
+            Log_Print("[WiFi] NET Ready -> MQTT/Downlink Enabled\r\n");
             mqtt_send_pending = 0;
             return 1;
         }
 
-        Log_Print("TCP Retry...\r\n");
+        Log_Print("[WiFi] TCP Retry...\r\n");
         DELAY_Nms(500);
     }
 
-    Log_Print("TCP Connect Failed\r\n");
+    Log_Print("[WiFi] TCP Connect Failed\r\n");
     mqtt_send_pending = 0;
     return 0;
 }
@@ -323,49 +327,26 @@ static void BEEP_Init_Safe(void)
 static void BEEP_Config(void)
 {
     GPIO_InitTypeDef GPIO_InitStructure;
-    TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure;
-    TIM_OCInitTypeDef TIM_OCInitStructure;
 
-    // GPIO 配置为复用推挽输出（TIM3 CH3）
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
-    GPIO_InitStructure.GPIO_Pin   = GPIO_Pin_0;
-    GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_AF_PP;
+    // 使用 PF2 作为蜂鸣器控制脚，避免与 PB0 风扇口冲突
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOF, ENABLE);
+    GPIO_InitStructure.GPIO_Pin   = GPIO_Pin_2;
+    GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_Out_PP;
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-    GPIO_Init(GPIOB, &GPIO_InitStructure);
+    GPIO_Init(GPIOF, &GPIO_InitStructure);
 
-    // TIM3 时钟功能
-    RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE);
-
-    // TIM3 配置：2kHz PWM（适合蜂鸣器）
-    TIM_TimeBaseStructure.TIM_Period = 500 - 1;  // 1MHz / 500 = 2kHz
-    TIM_TimeBaseStructure.TIM_Prescaler = 72 - 1;
-    TIM_TimeBaseStructure.TIM_ClockDivision = 0;
-    TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up;
-    TIM_TimeBaseInit(TIM3, &TIM_TimeBaseStructure);
-
-    // PWM 模式配置
-    TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
-    TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
-    TIM_OCInitStructure.TIM_Pulse = 0;  // 榛樿鍏抽棴
-    TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
-    TIM_OC3Init(TIM3, &TIM_OCInitStructure);
-
-    TIM_OC3PreloadConfig(TIM3, TIM_OCPreload_Enable);
-    TIM_ARRPreloadConfig(TIM3, ENABLE);
-
-    TIM_Cmd(TIM3, ENABLE);
+    GPIO_SetBits(GPIOF, GPIO_Pin_2); // 默认关闭（高电平）
 }
 
 static void BEEP_State(u8 state)
 {
     if (state == 1)
     {
-        TIM_SetCompare3(TIM3, 250);  // 50% 鍗犵┖姣旓紝杩炵画铚傞福
-        TIM_Cmd(TIM3, ENABLE);
+        GPIO_ResetBits(GPIOF, GPIO_Pin_2);  // 低电平使能蜂鸣器
     }
     else
     {
-        TIM_Cmd(TIM3, DISABLE);   // 安全关闭定时器
+        GPIO_SetBits(GPIOF, GPIO_Pin_2);    // 关闭蜂鸣器
     }
 }
 
@@ -390,8 +371,11 @@ static void Motor_Init(void)
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_Init(MOTOR_SIG_PORT, &GPIO_InitStructure);
 
-    // 榛樿鍏抽棴
-    Motor_Control(0, 0);
+    // 上电默认关闭风扇（高电平）
+    GPIO_SetBits(MOTOR_SIG_PORT, MOTOR_SIG_PIN);
+    motor_status = 0;
+    motor_control_mode = 0;
+    Log_Print("[Init] Fan OFF\r\n");
 }
 
 /* ====================== 电机控制 ====================== */
@@ -400,12 +384,17 @@ static void Motor_Control(u8 status, u8 mode)
 {
     if (status == 0)
     {
-        GPIO_ResetBits(MOTOR_SIG_PORT, MOTOR_SIG_PIN);  // 关闭风扇
+        GPIO_SetBits(MOTOR_SIG_PORT, MOTOR_SIG_PIN);    // 关闭风扇（JY003 信号线高电平关闭）
+        Log_Print("[Fan] OFF\r\n");
     }
     else
     {
-        GPIO_SetBits(MOTOR_SIG_PORT, MOTOR_SIG_PIN);    // 开启风扇
+        GPIO_ResetBits(MOTOR_SIG_PORT, MOTOR_SIG_PIN);  // 开启风扇（JY003 信号线低电平开启）
+        Log_Print("[Fan] ON\r\n");
     }
+
+    motor_status = status;
+    motor_control_mode = mode;
 }
 
 /* ====================== 修复1：MQTT 发送优化，确保 JSON 数据完整发送 ====================== */
@@ -423,12 +412,11 @@ static void Send_MQTT_Process(void)
 
     /* 构建完整的 JSON 数据，一次性发送*/
     snprintf((char *)Pub_Message, sizeof(Pub_Message),
-             "{\"TEMP\":%d,\"HUM\":%d,\"MQ2\":%lu,"
-             "\"HUMAN\":%s}",
+             "{\"TEMP\":%d,\"HUM\":%d,\"MQ2\":%lu,\"FAN\":%s}",
              dht11_data[2],
              dht11_data[0],
              (unsigned long)ppm,
-             human_status ? "true" : "false");
+             motor_status ? "true" : "false");
 
     Log_Print("PUB Topic:");
     Log_Print((char *)Pub_Topic);
@@ -454,21 +442,23 @@ static void Send_MQTT_Process(void)
     if (cmdAT(at_buf, "OK", ">", strlen(at_buf)))
     {
         if (Wifi_SendRaw(MQTT_SEND_RealtimeData, pkt_len, "SEND OK", NULL))
+        {
             Log_Print("MQTT Pub OK\r\n");
+            mqtt_send_pending = 0;  /* 成功后才清除发送标志 */
+        }
         else
+        {
             Log_Print("MQTT Pub Fail\r\n");
+        }
     }
     else
     {
         Log_Print("AT+CIPSEND No Response\r\n");
     }
-
-    mqtt_send_pending = 0;  /* 重置发送标志 */
 }
 
 static void Update_SensorData(void)
 {
-    u32 mq2_raw_ppm;
     u32 mq2_corrected;
     u8  i;
 
@@ -484,24 +474,20 @@ static void Update_SensorData(void)
         DELAY_Nms(20);
     }
 
-    /* 读取 MQ2 从mq2.c 获取数据，已有 IIR 滤波 */
-    mq2_raw     = MQ2_GetData();
-    mq2_raw_ppm = (u32)MQ2_GetData_PPM();
+    /* 读取 MQ2 从mq2.c 获取 ADC 原始值 */
+    mq2_raw = MQ2_GetData();
+    ppm    = mq2_raw;   /* 直接把 ADC 当成 PPM 上报 */
 
-    /* 校准计算 */
-    if (mq2_raw_ppm > 1000000UL)
-        mq2_raw_ppm = (u32)mq2_raw * 100UL;
-
-    mq2_corrected = mq2_raw_ppm;
+    /* 限制最大值，避免异常数据 */
+    mq2_corrected = ppm;
     if (mq2_corrected > MQ2_REPORT_MAX)
         mq2_corrected = MQ2_REPORT_MAX;
-
 
     ppm = mq2_corrected;
 
     /* 测试打印 MQ2 ADC 和 PPM */
     static u32 last_print_time = 0;
-    if (system_timer - last_print_time > 5000)  // 每5秒打印一次
+    if (system_timer - last_print_time > 5000)  /* 每5秒打印一次 */
     {
         Log_Printf("MQ2 ADC: %d, PPM: %lu\r\n", mq2_raw, ppm);
         last_print_time = system_timer;
@@ -595,7 +581,7 @@ static void Update_DisplayAndAlarm(void)
     else if (oled_mode == 3)
     {
         OLED_ShowString(0, 0, (u8 *)"System Status");
-        sprintf(buf, "SERVO:%s", motor_status ? "ON"     : "OFF");
+        sprintf(buf, "FAN  :%s", motor_status ? "ON"     : "OFF");
         OLED_ShowString(2, 0, (u8 *)buf);
 
         sprintf(buf, "HUMAN:%s", human_status ? "YES"   : "NO");
@@ -628,8 +614,11 @@ static void Handle_Keys(void)
     u8 key1_pressed = (key1_now == Bit_RESET);  /* 低电平有效 */
     u8 key0_pressed = (key0_now == Bit_RESET);
 
+    static u32 last_key_time = 0;
     if (!key_level_ready)
         key_level_ready = 1;
+    // 按键消抖优化：每次有效操作后延时100ms
+    if (system_timer - last_key_time < 100) return;
 
     /* KEY0 + KEY1 同时按下，切换 OLED 页面 */
     if (key1_pressed && key0_pressed)
@@ -640,7 +629,7 @@ static void Handle_Keys(void)
             if ((GPIO_ReadInputDataBit(KEY1_PORT, KEY1_PIN) != key1_idle_level) &&
                 (GPIO_ReadInputDataBit(KEY0_PORT, KEY0_PIN) != key0_idle_level))
             {
-                oled_mode = (oled_mode + 1) % 5;  // 寰幆 0-4
+                oled_mode = (oled_mode + 1) % 5;  // 寰?鐜? 0-4
                 menu_index = 0;
                 sub_menu_index = 0;
                 key_combo_latched = 1;
@@ -672,11 +661,13 @@ static void Handle_Keys(void)
             else if (sub_menu_index == 2 && mq2_alarm_threshold < 10000)
                 mq2_alarm_threshold += 50;
         }
-        else if (oled_mode == 3)  // 系统状态
+        else
         {
+            Log_Print("[Key] 手动开风扇\r\n");
             Motor_Control(1, 1);
         }
         key1_latched = 1;
+        last_key_time = system_timer;
     }
     else if (!key1_pressed)
         key1_latched = 0;
@@ -699,11 +690,13 @@ static void Handle_Keys(void)
             else if (sub_menu_index == 2 && mq2_alarm_threshold > 100)
                 mq2_alarm_threshold -= 50;
         }
-        else if (oled_mode == 3)  // 系统状态
+        else
         {
+            Log_Print("[Key] 手动关风扇\r\n");
             Motor_Control(0, 1);
         }
         key0_latched = 1;
+        last_key_time = system_timer;
     }
     else if (!key0_pressed)
         key0_latched = 0;
@@ -716,7 +709,7 @@ static void Handle_Keys(void)
             DELAY_Nms(KEY_DEBOUNCE_MS);
             if (GPIO_ReadInputDataBit(K_KEY_PORT, K_KEY_PIN))
             {
-                oled_mode = (oled_mode + 1) % 5;  // 寰幆 0-4
+                oled_mode = (oled_mode + 1) % 5;  // 寰?鐜? 0-4
                 menu_index = 0;
                 sub_menu_index = 0;
                 k_key_latched = 1;
@@ -823,8 +816,12 @@ static void Handle_WifiCommand(void)
     }
 
     cmd_val = 0;
-    if (JsonTryGetSwitch((char *)check_char, "SERVO", &cmd_val))
+    if (JsonTryGetSwitch((char *)check_char, "SERVO", &cmd_val) ||
+        JsonTryGetSwitch((char *)check_char, "FAN", &cmd_val) ||
+        JsonTryGetSwitch((char *)check_char, "MOTOR", &cmd_val))
+    {
         Motor_Control(cmd_val, 1);
+    }
 
     wifiRecvOver = 0;
     recvCnt      = 0;
@@ -974,7 +971,7 @@ int main(void)
                     wifi_retry_delay = WIFI_RETRY_MS * (1 << (wifi_retry_count > 4 ? 4 : wifi_retry_count));
                     if (wifi_retry_delay > 300000UL) wifi_retry_delay = 300000UL;
                     Log_Print("WiFi Retry Failed, next in ");
-                    // 鍙互娣诲姞寤惰繜鏄剧ず
+                    // 鍙?浠ユ坊鍔犲欢杩熸樉绀?
                 }
             }
 #endif
