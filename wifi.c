@@ -12,7 +12,7 @@ volatile u8 wifiRecvOver = 0;
 int status = 0;
 
 #define WIFI_WAIT_STEP_MS       60U
-#define WIFI_WAIT_CYCLES_CMDAT  10U
+#define WIFI_WAIT_CYCLES_CMDAT  50U
 #define WIFI_WAIT_CYCLES_RAW    8U
 
 
@@ -30,44 +30,44 @@ void UART_Init()
 	 GPIO_InitTypeDef GPIO_InitStructure;
 	 USART_InitTypeDef USART_InitStructure; 
 	  // PA2 PA3
-   RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA,ENABLE); // ä½¿èƒ½ GPIOA æ—¶é’Ÿ 
-   RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART2,ENABLE);// ä½¿èƒ½ USART2 æ—¶é’Ÿ
+   RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA,ENABLE); // Ê¹ÄÜ GPIOA Ê±ÖÓ 
+   RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART2,ENABLE);// Ê¹ÄÜ USART2 Ê±ÖÓ
 
   
-   GPIO_InitStructure.GPIO_Pin=GPIO_Pin_2;// TX å¤ç”¨æ¨æŒ½è¾“å‡º PA2 
+   GPIO_InitStructure.GPIO_Pin=GPIO_Pin_2;// TX ¸´ÓÃÍÆÍìÊä³ö PA2 
 	 GPIO_InitStructure.GPIO_Speed=GPIO_Speed_50MHz; 
-	 GPIO_InitStructure.GPIO_Mode=GPIO_Mode_AF_PP; // å¤ç”¨æ¨æŒ½è¾“å‡º 
-	 GPIO_Init(GPIOA,&GPIO_InitStructure); // åˆå§‹åŒ– GPIO
-	 GPIO_InitStructure.GPIO_Pin=GPIO_Pin_3;// RX æµ®ç©ºè¾“å…¥ PA3 
-	 GPIO_InitStructure.GPIO_Mode=GPIO_Mode_IN_FLOATING; // æµ®ç©ºè¾“å…¥ 
-	 GPIO_Init(GPIOA,&GPIO_InitStructure); // åˆå§‹åŒ– GPIO 
+	 GPIO_InitStructure.GPIO_Mode=GPIO_Mode_AF_PP; // ¸´ÓÃÍÆÍìÊä³ö 
+	 GPIO_Init(GPIOA,&GPIO_InitStructure); // ³õÊ¼»¯ GPIO
+	 GPIO_InitStructure.GPIO_Pin=GPIO_Pin_3;// RX ¸¡¿ÕÊäÈë PA3 
+	 GPIO_InitStructure.GPIO_Mode=GPIO_Mode_IN_FLOATING; // ¸¡¿ÕÊäÈë 
+	 GPIO_Init(GPIOA,&GPIO_InitStructure); // ³õÊ¼»¯ GPIO 
 
 
 	 
-   USART_InitStructure.USART_BaudRate =115200;// æ³¢ç‰¹ç‡ 115200 
-   USART_InitStructure.USART_WordLength = USART_WordLength_8b;// å­—é•¿ 8 ä½æ•°æ® 
-   USART_InitStructure.USART_StopBits = USART_StopBits_1;// 1 ä½åœæ­¢ä½ 
-   USART_InitStructure.USART_Parity = USART_Parity_No;// æ— æ ¡éªŒä½ 
-   USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;// æ— ç¡¬ä»¶æµæ§åˆ¶ 
-   USART_InitStructure.USART_Mode = USART_Mode_Rx | USART_Mode_Tx; // æ”¶å‘æ¨¡å¼ 
-   USART_Init(USART2, &USART_InitStructure); // åˆå§‹åŒ– USART2
+   USART_InitStructure.USART_BaudRate =115200;// ²¨ÌØÂÊ 115200 
+   USART_InitStructure.USART_WordLength = USART_WordLength_8b;// ×Ö³¤ 8 Î»Êı¾İ 
+   USART_InitStructure.USART_StopBits = USART_StopBits_1;// 1 Î»Í£Ö¹Î» 
+   USART_InitStructure.USART_Parity = USART_Parity_No;// ÎŞĞ£ÑéÎ» 
+   USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;// ÎŞÓ²¼şÁ÷¿ØÖÆ 
+   USART_InitStructure.USART_Mode = USART_Mode_Rx | USART_Mode_Tx; // ÊÕ·¢Ä£Ê½ 
+   USART_Init(USART2, &USART_InitStructure); // ³õÊ¼»¯ USART2
 	 
-	 USART_ITConfig(USART2, USART_IT_RXNE, ENABLE);// å¼€å¯æ¥æ”¶ä¸­æ–­ 
-	 USART_ITConfig(USART2, USART_IT_IDLE, ENABLE);// å¼€å¯ç©ºé—²ä¸­æ–­ 
+	 USART_ITConfig(USART2, USART_IT_RXNE, ENABLE);// ¿ªÆô½ÓÊÕÖĞ¶Ï 
+	 USART_ITConfig(USART2, USART_IT_IDLE, ENABLE);// ¿ªÆô¿ÕÏĞÖĞ¶Ï 
 	 NVIC_EnableIRQ(USART2_IRQn);
 
-	 USART_Cmd(USART2, ENABLE); // ä½¿èƒ½ USART2 
+	 USART_Cmd(USART2, ENABLE); // Ê¹ÄÜ USART2 
 }
 
 
 _Bool WIFI_Init()
 {
-	 RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA,ENABLE); // ä½¿èƒ½ GPIOA æ—¶é’Ÿ 
+	 RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA,ENABLE); // Ê¹ÄÜ GPIOA Ê±ÖÓ 
    GPIO_InitTypeDef GPIO_InitStructure;
    GPIO_InitStructure.GPIO_Pin=GPIO_Pin_4 | GPIO_Pin_5;// PA4 PA5 
 	 GPIO_InitStructure.GPIO_Speed=GPIO_Speed_50MHz; 
-	 GPIO_InitStructure.GPIO_Mode=GPIO_Mode_Out_PP; // æ¨æŒ½è¾“å‡º 
-	 GPIO_Init(GPIOA,&GPIO_InitStructure); // åˆå§‹åŒ– GPIO
+	 GPIO_InitStructure.GPIO_Mode=GPIO_Mode_Out_PP; // ÍÆÍìÊä³ö 
+	 GPIO_Init(GPIOA,&GPIO_InitStructure); // ³õÊ¼»¯ GPIO
    WIFI_ENABLE;
 	 WIFI_UNRESET;
 	 USART1_SendStr("wifi init...\r\n",sizeof("wifi init...\r\n"));
@@ -79,7 +79,7 @@ _Bool WIFI_Init()
 	 return testAT();
 }
 
-// STM32 å‘é€æ•°æ®åˆ° ESP8266ï¼Œé•¿åº¦ä¸º len å­—èŠ‚
+// STM32 ·¢ËÍÊı¾İµ½ ESP8266£¬³¤¶ÈÎª len ×Ö½Ú
 void USART2_Send(u8* data,int len)
 {
 	int i;
@@ -91,7 +91,7 @@ void USART2_Send(u8* data,int len)
 
 }
 
-//int fputc(int ch,FILE *p) // é‡å®šå‘ printf å‡½æ•°åˆ° USART2 
+//int fputc(int ch,FILE *p) // ÖØ¶¨Ïò printf º¯Êıµ½ USART2 
 //{ 
 //    USART_SendData(USART2,(u8)ch); 
 //	  while(USART_GetFlagStatus(USART2,USART_FLAG_TXE)==RESET);
@@ -99,47 +99,43 @@ void USART2_Send(u8* data,int len)
 //} 
 
 
-void USART2_IRQHandler(void) // USART2 ä¸­æ–­æœåŠ¡å‡½æ•° 
-{ 
-		u8 rx_data = 0;
-		if(USART_GetITStatus(USART2, USART_IT_RXNE) != RESET) // æ£€æŸ¥ USART2 æ¥æ”¶ä¸­æ–­ 
-		{ 
-		   rx_data = (u8)USART_ReceiveData(USART2);
-		   if(recvCnt < (WIFI_RECV_BUF_SIZE - 1U))
-		   {
-		   	 wifiRecvBuf[recvCnt++] = rx_data;
-		   	 wifiRecvBuf[recvCnt] = '\0';
-		   }
-		} 
-		USART_ClearFlag(USART2,USART_FLAG_RXNE); // æ¸…é™¤æ¥æ”¶ä¸­æ–­æ ‡å¿— 
-		
-		if(USART_GetITStatus(USART2, USART_IT_IDLE) != RESET) // æ£€æŸ¥ USART2 ç©ºé—²ä¸­æ–­ 
-		{ 
-		   rx_data = (u8)USART_ReceiveData(USART2);
-		   if(recvCnt < (WIFI_RECV_BUF_SIZE - 1U))
-		   {
-		   	 wifiRecvBuf[recvCnt++] = rx_data;
-		   	 wifiRecvBuf[recvCnt] = '\0';
-		   }
-       wifiRecvOver = 1;
-//			USART1_SendStr(wifiRecvBuf,recvCnt);
-			
-			
-		} 
-		USART_ClearFlag(USART2,USART_FLAG_IDLE); // æ¸…é™¤ç©ºé—²ä¸­æ–­æ ‡å¿— 
+void USART2_IRQHandler(void)
+{
+    u8 rx;
+
+    if (USART_GetITStatus(USART2, USART_IT_RXNE) != RESET)
+    {
+        rx = USART_ReceiveData(USART2);
+        if (recvCnt < (WIFI_RECV_BUF_SIZE - 1U))
+        {
+            wifiRecvBuf[recvCnt++] = rx;
+        }
+    }
+
+    if (USART_GetITStatus(USART2, USART_IT_IDLE) != RESET)
+    {
+        volatile u8 temp;
+        temp = USART_ReceiveData(USART2);
+        (void)temp;
+
+        wifiRecvBuf[recvCnt] = '\0';
+        wifiRecvOver = 1;
+    }
+
+    USART_ClearITPendingBit(USART2, USART_IT_IDLE);
 }
 
 
 //usart.c
  
 /*
- * å‡½æ•°åï¼šcmdAT
- * åŠŸèƒ½ï¼š  å‘ WF-ESP8266 å‘é€ AT æŒ‡ä»¤
- * å‚æ•°ï¼š  cmdDataï¼šå‘é€çš„å‘½ä»¤å­—ç¬¦ä¸²
- *         expReturn1ã€expReturn2ï¼šæœŸæœ›çš„è¿”å›å­—ç¬¦ä¸²ï¼Œå¦‚æœä¸º NULL åˆ™ä¸æ£€æŸ¥è¿”å›å€¼
- * è¿”å›å€¼ï¼š1ï¼šæˆåŠŸ
- *         0ï¼šå¤±è´¥
- * è¯´æ˜ï¼š  è°ƒç”¨æ­¤å‡½æ•°
+ * º¯ÊıÃû£ºcmdAT
+ * ¹¦ÄÜ£º  Ïò WF-ESP8266 ·¢ËÍ AT Ö¸Áî
+ * ²ÎÊı£º  cmdData£º·¢ËÍµÄÃüÁî×Ö·û´®
+ *         expReturn1¡¢expReturn2£ºÆÚÍûµÄ·µ»Ø×Ö·û´®£¬Èç¹ûÎª NULL Ôò²»¼ì²é·µ»ØÖµ
+ * ·µ»ØÖµ£º1£º³É¹¦
+ *         0£ºÊ§°Ü
+ * ËµÃ÷£º  µ÷ÓÃ´Ëº¯Êı
  */
 
 _Bool cmdAT(char *cmdData,char *expReturn1,char *expReturn2,int len)
@@ -147,12 +143,17 @@ _Bool cmdAT(char *cmdData,char *expReturn1,char *expReturn2,int len)
   
 	_Bool res = 0;
 	uint8_t count=0;
-	memset((void *)wifiRecvBuf,0,WIFI_RECV_BUF_SIZE);
-	recvCnt = 0;
-	wifiRecvOver = 0;
-	// å‘é€ AT å‘½ä»¤åˆ° WiFi æ¨¡å—
+    if (!wifiRecvOver)
+    {
+        memset((void *)wifiRecvBuf,0,WIFI_RECV_BUF_SIZE);
+        recvCnt = 0;
+    }
+	// ·¢ËÍ AT ÃüÁîµ½ WiFi Ä£¿é
 	USART2_Send(cmdData,len);
-	USART2_Send("\r\n",2);
+	if (len < 2 || cmdData[len - 2] != '\r' || cmdData[len - 1] != '\n')
+	{
+		USART2_Send("\r\n",2);
+	}
 //	printf("cmdDataTmp:%s\r\nlenth:%d",cmdDataTmp,sizeof((char *)cmdDataTmp)/sizeof(char));
 	if(expReturn1==NULL && expReturn2==NULL)
 		return 1;
@@ -161,7 +162,7 @@ _Bool cmdAT(char *cmdData,char *expReturn1,char *expReturn2,int len)
 	{
 		DELAY_Nms(WIFI_WAIT_STEP_MS);
 		count++;
-		// æ£€æŸ¥ AT å‘½ä»¤å“åº”
+		// ¼ì²é AT ÃüÁîÏìÓ¦
 		if(expReturn2!=NULL)
 		   res = (((_Bool)strstr((const char *)wifiRecvBuf,expReturn1))||((_Bool)strstr((const char *)wifiRecvBuf,expReturn2)));
 		else
@@ -169,7 +170,7 @@ _Bool cmdAT(char *cmdData,char *expReturn1,char *expReturn2,int len)
 		
 		if(res)  break;
 	}
-	// æ¸…é™¤ç¼“å†²åŒº
+	// Çå³ı»º³åÇø
 	 memset((void *)wifiRecvBuf,0,WIFI_RECV_BUF_SIZE);
 	 recvCnt=0;
 	 return res;
@@ -238,12 +239,12 @@ _Bool ESP8266_DHCP_CUR (void)
 }
  
 /*
- * å‡½æ•°åï¼šESP8266_Net_Mode_Choose
- * åŠŸèƒ½ï¼š  è®¾ç½® WF-ESP8266 çš„å·¥ä½œæ¨¡å¼
- * å‚æ•°ï¼š  enumModeï¼šå·¥ä½œæ¨¡å¼
- * è¿”å›å€¼ï¼š1ï¼šæˆåŠŸ
- *         0ï¼šå¤±è´¥
- * è¯´æ˜ï¼š  è°ƒç”¨æ­¤å‡½æ•°
+ * º¯ÊıÃû£ºESP8266_Net_Mode_Choose
+ * ¹¦ÄÜ£º  ÉèÖÃ WF-ESP8266 µÄ¹¤×÷Ä£Ê½
+ * ²ÎÊı£º  enumMode£º¹¤×÷Ä£Ê½
+ * ·µ»ØÖµ£º1£º³É¹¦
+ *         0£ºÊ§°Ü
+ * ËµÃ÷£º  µ÷ÓÃ´Ëº¯Êı
  */
 _Bool ESP8266_Net_Mode_Choose ( ENUM_Net_ModeTypeDef enumMode )
 {
@@ -265,13 +266,13 @@ _Bool ESP8266_Net_Mode_Choose ( ENUM_Net_ModeTypeDef enumMode )
 }
  
 /*
- * å‡½æ•°åï¼šESP8266_JoinAP
- * åŠŸèƒ½ï¼š  WF-ESP8266 è¿æ¥åˆ° WiFi
- * å‚æ•°ï¼š  pSSIDï¼šWiFi åç§°
- *         pPassWordï¼šWiFi å¯†ç 
- * è¿”å›å€¼ï¼š1ï¼šæˆåŠŸ
- *         0ï¼šå¤±è´¥
- * è¯´æ˜ï¼š  è°ƒç”¨æ­¤å‡½æ•°
+ * º¯ÊıÃû£ºESP8266_JoinAP
+ * ¹¦ÄÜ£º  WF-ESP8266 Á¬½Óµ½ WiFi
+ * ²ÎÊı£º  pSSID£ºWiFi Ãû³Æ
+ *         pPassWord£ºWiFi ÃÜÂë
+ * ·µ»ØÖµ£º1£º³É¹¦
+ *         0£ºÊ§°Ü
+ * ËµÃ÷£º  µ÷ÓÃ´Ëº¯Êı
  */
 _Bool ESP8266_JoinAP ( char * pSSID, char * pPassWord )
 {
@@ -284,12 +285,12 @@ _Bool ESP8266_JoinAP ( char * pSSID, char * pPassWord )
 }
  
 /*
- * å‡½æ•°åï¼šESP8266_Enable_MultipleId
- * åŠŸèƒ½ï¼š  WF-ESP8266 å¯ç”¨å¤šè¿æ¥
- * å‚æ•°ï¼š  enumEnUnvarnishTxï¼šå¤šè¿æ¥æ¨¡å¼
- * è¿”å›å€¼ï¼š1ï¼šæˆåŠŸ
- *         0ï¼šå¤±è´¥
- * è¯´æ˜ï¼š  è°ƒç”¨æ­¤å‡½æ•°
+ * º¯ÊıÃû£ºESP8266_Enable_MultipleId
+ * ¹¦ÄÜ£º  WF-ESP8266 ÆôÓÃ¶àÁ¬½Ó
+ * ²ÎÊı£º  enumEnUnvarnishTx£º¶àÁ¬½ÓÄ£Ê½
+ * ·µ»ØÖµ£º1£º³É¹¦
+ *         0£ºÊ§°Ü
+ * ËµÃ÷£º  µ÷ÓÃ´Ëº¯Êı
  */
 _Bool ESP8266_Enable_MultipleId ( FunctionalState enumEnUnvarnishTx )
 {
@@ -353,8 +354,13 @@ _Bool ESP8266_UnvarnishSend ( void )
 _Bool TCP_Init()
 {
     u8 retry_count = 0;
-    const u8 max_retries = 50;  // æœ€å¤šé‡è¯• 50 æ¬¡ï¼Œé¿å…æ— é™å¾ªç¯
-    
+    const u8 max_retries = 50;  // ×î¶àÖØÊÔ 50 ´Î£¬±ÜÃâÎŞÏŞÑ­»·
+
+    status = 0;
+    wifiReady = 0;
+    int connect_len = 0;
+    int subscribe_len = 0;
+
 		while(retry_count < max_retries)
 		{
 			switch(status)
@@ -374,61 +380,66 @@ _Bool TCP_Init()
 				
 				case 3://????wifi???
 					USART1_SendStr("wifi init...3\r\n",sizeof("wifi init...3\r\n"));
-					cmdAT ( "AT+RST", "OK", NULL ,strlen("AT+RST"));
-					status++;break;
-				case 4: //????wifi????TCP????????????????
-					USART1_SendStr("wifi init...4\r\n",sizeof("wifi init...4\r\n"));			
-				  if(cmdAT ( "AT+CIPMUX=0", "OK", NULL ,strlen("AT+CIPMUX=0"))) //???????? 
+                    if (cmdAT("AT+RST", "OK", NULL, strlen("AT+RST")))
+                    {
+                        DELAY_Nms(3000);  // µÈ´ı ESP8266 ÖØÆôÍê³É
+                        status++;
+                    }
+                    break;
+				case 4://?????????????
+					if(cmdAT ( "AT+CIPMUX=0", "OK", NULL ,strlen("AT+CIPMUX=0"))) //???????? 
 						status++;
 					break;
-			
-				case 5://??????????????????
-					USART1_SendStr("wifi init...5\r\n",sizeof("wifi init...5\r\n"));	
-				u8 a[48]={0};
+		case 5://??????????????????
+			USART1_SendStr("wifi init...5\r\n",sizeof("wifi init...5\r\n"));
+			{
+				char a[64] = {0};
 				sprintf(a,"AT+CIPSTART=\"TCP\",\"%s\",1883",Cloud_addr);
-					if(cmdAT ( a, "OK", NULL ,strlen("AT+CIPSTART=\"TCP\",\"bj-2-mqtt.iot-api.com\",1883"))) //??????????IP
-						status++;
-					break;
-				
-				case 6://????????????????????????
-					USART1_SendStr("wifi init...6\r\n",sizeof("wifi init...6\r\n"));
-					u8 connect_len = ConnectMqtt("k0eldqgj","q7pj8jzucv54vpm4","sLWqI5ereL");
-					USART1_SendStr(MQTT_SEND_RealtimeData,connect_len);
-					u8 cmd_wifi[25]={0};
-					sprintf(cmd_wifi,"AT+CIPSEND=%d",connect_len);				
-					if(cmdAT ( cmd_wifi, "OK", ">",strlen(cmd_wifi) ))  
-						status++;
-					wifiReady = 1;break;//????????
-				
-				case 7://???????????MQTT???????
-					USART1_SendStr("wifi init...7\r\n",sizeof("wifi init...7\r\n"));
-					
-					if(Wifi_SendRaw(MQTT_SEND_RealtimeData, connect_len, "SEND OK", "+IPD,4")) 
-					{ 
-						USART1_SendStr("connect ok!\r\n",sizeof("connect ok!\r\n"));
-						status++;
-					}
-					break;
-				case 8://????????????????????????
-					USART1_SendStr("wifi init...8\r\n",sizeof("wifi init...8\r\n"));
-					u8 Subscribe_len = MqttSubscribeTopic("data/stream/set",0,1);//??????????
-					USART1_SendStr(MQTT_SEND_RealtimeData,Subscribe_len);
-					u8 cmd_Subscribe[25]={0};
-					sprintf(cmd_Subscribe,"AT+CIPSEND=%d",Subscribe_len);				
-					if(cmdAT ( cmd_Subscribe, "OK", ">",strlen(cmd_Subscribe) ))  
-						status++;
-					wifiReady = 1;break;//????????	
-				case 9://???????????MQTT???????
-				USART1_SendStr("wifi init...9\r\n",sizeof("wifi init...9\r\n"));
-				
-				if(Wifi_SendRaw(MQTT_SEND_RealtimeData, Subscribe_len, "SEND OK", "+IPD,4")) 
-				{ 
-					USART1_SendStr("Subscribe ok!\r\n",sizeof("Subscribe ok!\r\n"));
+				if(cmdAT ( a, "OK", NULL ,strlen(a))) //??????????IP
 					status++;
-					return 1;
+			}
+			break;
+		case 6://×¼±¸MQTT CONNECTÊı¾İ
+			USART1_SendStr("wifi init...6\r\n",sizeof("wifi init...6\r\n"));
+			connect_len = ConnectMqtt("k0eldqgj","q7pj8jzucv54vpm4","sLWqI5ereL");
+			{
+				char cmd_wifi[32] = {0};
+				sprintf(cmd_wifi,"AT+CIPSEND=%d",connect_len);
+				if(cmdAT ( cmd_wifi, "OK", ">",strlen(cmd_wifi) ))
+				{
+					status++;
+					wifiReady = 1;
 				}
-				default:
-					return 2;	
+			}
+			break;
+		case 7://·¢ËÍMQTT CONNECTÊı¾İ
+			USART1_SendStr("wifi init...7\r\n",sizeof("wifi init...7\r\n"));
+			if(Wifi_SendRaw(MQTT_SEND_RealtimeData, connect_len, "SEND OK", NULL))
+			{
+				USART1_SendStr("MQTT CONNECT sent!\r\n",sizeof("MQTT CONNECT sent!\r\n"));
+				status++;
+			}
+			break;
+
+			case 8://×¼±¸MQTT SUBSCRIBEÊı¾İ(attributes/push)
+    USART1_SendStr("wifi init...10\r\n",sizeof("wifi init...10\r\n"));
+    subscribe_len = MqttSubscribeTopic("attributes/push",0,1);
+    {
+        char cmd_Subscribe[25]={0};
+        sprintf(cmd_Subscribe,"AT+CIPSEND=%d",subscribe_len);
+        if(cmdAT ( cmd_Subscribe, "OK", ">",strlen(cmd_Subscribe) ))
+            status++;
+    }
+    break;
+       case 9://·¢ËÍMQTT SUBSCRIBEÊı¾İ
+    USART1_SendStr("wifi init...11\r\n",sizeof("wifi init...11\r\n"));
+    if(Wifi_SendRaw(MQTT_SEND_RealtimeData, subscribe_len, "SEND OK", NULL))
+    {
+        USART1_SendStr("MQTT SUBSCRIBE attributes/push sent!\r\n",sizeof("MQTT SUBSCRIBE attributes/push sent!\r\n"));
+        status++;
+        return 1; // ³õÊ¼»¯Íê³É
+    }
+    break;
 			}
 			DELAY_Nms(100);
             retry_count++;
