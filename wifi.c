@@ -9,6 +9,9 @@ volatile u16 recvCnt = 0;
 volatile u8 wifiRecvBuf[WIFI_RECV_BUF_SIZE];
 u8 wifiReady = 0;
 volatile u8 wifiRecvOver = 0;
+static u8 downlinkFrame[WIFI_RECV_BUF_SIZE];
+static volatile u16 downlinkLen = 0;
+static volatile u8 downlinkReady = 0;
 int status = 0;
 
 #define WIFI_WAIT_STEP_MS       60U
@@ -119,12 +122,46 @@ void USART2_IRQHandler(void)
         (void)temp;
 
         wifiRecvBuf[recvCnt] = '\0';
+        if (recvCnt > 0U)
+        {
+            u16 frame_len = recvCnt;
+            if (frame_len >= WIFI_RECV_BUF_SIZE)
+                frame_len = WIFI_RECV_BUF_SIZE - 1U;
+            memcpy((void *)downlinkFrame, (const void *)wifiRecvBuf, frame_len);
+            downlinkFrame[frame_len] = '\0';
+            downlinkLen = frame_len;
+            downlinkReady = 1;
+        }		
         wifiRecvOver = 1;
+				  recvCnt = 0;
     }
 
     USART_ClearITPendingBit(USART2, USART_IT_IDLE);
 }
 
+_Bool Wifi_FetchDownlinkFrame(u8 *out, u16 out_size, u16 *out_len)
+{
+    u16 len;
+
+    if (!out || out_size == 0 || !out_len)
+        return 0;
+
+    if (!downlinkReady)
+        return 0;
+
+    __disable_irq();
+    len = downlinkLen;
+    if (len >= out_size)
+        len = out_size - 1U;
+    memcpy(out, (const void *)downlinkFrame, len);
+    out[len] = '\0';
+    downlinkReady = 0;
+    downlinkLen = 0;
+    __enable_irq();
+
+    *out_len = len;
+    return 1;
+}
 
 //usart.c
  
@@ -143,11 +180,6 @@ _Bool cmdAT(char *cmdData,char *expReturn1,char *expReturn2,int len)
   
 	_Bool res = 0;
 	uint8_t count=0;
-    if (!wifiRecvOver)
-    {
-        memset((void *)wifiRecvBuf,0,WIFI_RECV_BUF_SIZE);
-        recvCnt = 0;
-    }
 	// 发送 AT 命令到 WiFi 模块
 	USART2_Send(cmdData,len);
 	if (len < 2 || cmdData[len - 2] != '\r' || cmdData[len - 1] != '\n')
@@ -183,11 +215,6 @@ _Bool Wifi_SendRaw(const u8 *data, int len, const char *expReturn1, const char *
 
     if (data == NULL || len <= 0)
         return 0;
-
-    memset((void *)wifiRecvBuf, 0, WIFI_RECV_BUF_SIZE);
-    recvCnt = 0;
-    wifiRecvOver = 0;
-
     USART2_Send((u8 *)data, len);
 
     if (expReturn1 == NULL && expReturn2 == NULL)
@@ -303,15 +330,7 @@ _Bool ESP8266_Enable_MultipleId ( FunctionalState enumEnUnvarnishTx )
 }
  
 /*
- * ????????ESP8266_Link_Server
- * ????  ??WF-ESP8266???????????????
- * ????  ??enumE??????????
- *       ??ip????????IP?????
- *       ??ComNum????????????????
- *       ??id????????????????ID
- * ????  : 1????????
- *         0?????????
- * ????  ??????????
+
  */
 _Bool ESP8266_Link_Server ( ENUM_NetPro_TypeDef enumE, char * ip, char * ComNum, ENUM_ID_NO_TypeDef id)
 {
@@ -380,7 +399,7 @@ _Bool TCP_Init()
 				
 				case 3://????wifi???
 					USART1_SendStr("wifi init...3\r\n",sizeof("wifi init...3\r\n"));
-                    if (cmdAT("AT+RST", "OK", NULL, strlen("AT+RST")))
+                    if (cmdAT("AT+RST", "OK", "ready", strlen("AT+RST")))
                     {
                         DELAY_Nms(3000);  // 等待 ESP8266 重启完成
                         status++;
