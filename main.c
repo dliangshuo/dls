@@ -702,20 +702,37 @@ static void Handle_WifiCommand(void)
 {
     u16 copy_len = 0;
     u8  cmd_val;
-  if (!Wifi_FetchDownlinkFrame(check_char, sizeof(check_char), &copy_len))
+     if (!Wifi_FetchDownlinkFrame(check_char, sizeof(check_char), &copy_len))
         return;
+		 if (copy_len == 0)
+        return;
+    JsonNormalizeForMatch((char *)check_char);
 
-  if (copy_len == 0)
+    /* only accept attributes/push downlink topic */
+    if (strstr((char *)check_char, MQTT_SUB_TOPIC) == NULL)
+    {
+        Log_Print("Downlink Ignored:");
+        Log_Print((char *)check_char);
+        Log_Print("\r\n");
         return;
-  JsonNormalizeForMatch((char *)check_char);
+    }
+    if (strstr((char *)check_char, "\"BEEP\"") == NULL &&
+        strstr((char *)check_char, "\"LED\"") == NULL &&
+        strstr((char *)check_char, "\"FAN\"") == NULL )
+        
+    {
+        Log_Print("Downlink NoCtrlKey:");
+        Log_Print((char *)check_char);
+        Log_Print("\r\n");
+        return;
+    }
     Log_Print("Downlink:");
     Log_Print((char *)check_char);
     Log_Print("\r\n");
-	 cmd_val = 0;
+    cmd_val = 0;
     if (JsonTryGetSwitch((char *)check_char, "BEEP", &cmd_val))
         remote_beep_active = cmd_val;
-
-		    cmd_val = 0;
+    cmd_val = 0;
     if (JsonTryGetSwitch((char *)check_char, "LED", &cmd_val))
     {
         remote_led_active = cmd_val;
@@ -724,10 +741,10 @@ static void Handle_WifiCommand(void)
         else
             BOARD_LED_OFF();
     }
-		    cmd_val = 0;
-    if (JsonTryGetSwitch((char *)check_char, "SERVO", &cmd_val) ||
-        JsonTryGetSwitch((char *)check_char, "FAN", &cmd_val) ||
-        JsonTryGetSwitch((char *)check_char, "MOTOR", &cmd_val))
+    cmd_val = 0;
+    if (
+        JsonTryGetSwitch((char *)check_char, "FAN", &cmd_val)
+       )
     {
         Motor_Control(cmd_val, 1);
     }
