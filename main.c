@@ -154,6 +154,7 @@ static void Handle_Keys(void);
 static u8   JsonTryGetSwitch(const char *json, const char *key, u8 *out_value);
 static void JsonNormalizeForMatch(char *buf);
 static void Handle_WifiCommand(void);
+static u8   ExtractIpdPayload(const char *src, char *dst, u16 dst_size);
 _Bool Wifi_FetchDownlinkFrame(u8 *out, u16 out_size, u16 *out_len);
 
 /* ====================== »’÷æ/µ˜ ‘ ====================== */
@@ -697,29 +698,57 @@ static void JsonNormalizeForMatch(char *buf)
     }
     buf[w] = '\0';
 }
+static u8 ExtractIpdPayload(const char *src, char *dst, u16 dst_size)
+{
+    const char *ipd;
+    const char *colon;
+    u16 i = 0;
+
+    if (!src || !dst || dst_size == 0)
+        return 0;
+
+    ipd = strstr(src, "+IPD,");
+    if (!ipd)
+        return 0;
+
+    colon = strchr(ipd, ':');
+    if (!colon)
+        return 0;
+    colon++;
+
+    while (*colon != '\0' && i < (u16)(dst_size - 1U))
+    {
+        dst[i++] = *colon++;
+    }
+    dst[i] = '\0';
+    return (i > 0U);
+}
 
 static void Handle_WifiCommand(void)
 {
     u16 copy_len = 0;
     u8  cmd_val;
+	  char parsed_buf[256];
      if (!Wifi_FetchDownlinkFrame(check_char, sizeof(check_char), &copy_len))
         return;
 		 if (copy_len == 0)
         return;
-    JsonNormalizeForMatch((char *)check_char);
-
-    /* only accept attributes/push downlink topic */
-    if (strstr((char *)check_char, MQTT_SUB_TOPIC) == NULL)
+     if (ExtractIpdPayload((char *)check_char, parsed_buf, sizeof(parsed_buf)))  
     {
-        Log_Print("Downlink Ignored:");
-        Log_Print((char *)check_char);
-        Log_Print("\r\n");
-        return;
+        strncpy((char *)check_char, parsed_buf, sizeof(check_char) - 1U);
+        check_char[sizeof(check_char) - 1U] = '\0';
     }
+		    else
+    {
+        if (strcmp((char *)check_char, "SENDOK\r\n") == 0 ||
+            strcmp((char *)check_char, "SEND OK\r\n") == 0 ||
+            strcmp((char *)check_char, "OK\r\n") == 0)
+            return;
+    }
+    JsonNormalizeForMatch((char *)check_char);
     if (strstr((char *)check_char, "\"BEEP\"") == NULL &&
         strstr((char *)check_char, "\"LED\"") == NULL &&
-        strstr((char *)check_char, "\"FAN\"") == NULL )
-        
+        strstr((char *)check_char, "\"FAN\"") == NULL )    
     {
         Log_Print("Downlink NoCtrlKey:");
         Log_Print((char *)check_char);
