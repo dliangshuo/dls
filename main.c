@@ -23,21 +23,17 @@
 
 #define BEEP_ON()           BEEP_State(1)
 #define BEEP_OFF()          BEEP_State(0)
-
 // 云平台控制 LED -> D0: PB5, 低电平点亮
 #define BOARD_LED_PORT      GPIOB
 #define BOARD_LED_PIN       GPIO_Pin_5
 #define BOARD_LED_ON()      GPIO_ResetBits(BOARD_LED_PORT, BOARD_LED_PIN)
 #define BOARD_LED_OFF()     GPIO_SetBits(BOARD_LED_PORT, BOARD_LED_PIN)
-
 // 人体检测 LED -> D1: PE5, 低电平点亮
 #define HUMAN_LED_PORT      GPIOE
 #define HUMAN_LED_PIN       GPIO_Pin_5
 #define HUMAN_LED_RCC       RCC_APB2Periph_GPIOE
 #define HUMAN_LED_ON()      GPIO_ResetBits(HUMAN_LED_PORT, HUMAN_LED_PIN)
 #define HUMAN_LED_OFF()     GPIO_SetBits(HUMAN_LED_PORT, HUMAN_LED_PIN)
-
-
 #define KEY1_PORT           GPIOE
 #define KEY1_PIN            GPIO_Pin_3
 #define KEY0_PORT           GPIOE
@@ -45,17 +41,13 @@
 #define K_KEY_PORT          GPIOA
 #define K_KEY_PIN           GPIO_Pin_0
 #define K_KEY_RCC           RCC_APB2Periph_GPIOA
-
 #define SERVO_GPIO_PORT     GPIOA
 #define SERVO_GPIO_PIN      GPIO_Pin_9  // PB9, TIM4 CH4
-
 // JY003 Fan Module Pin
 #define MOTOR_SIG_PIN       GPIO_Pin_0  // PB0 (避免与WiFi PA4冲突)
 #define MOTOR_SIG_RCC       RCC_APB2Periph_GPIOB
 #define MOTOR_SIG_PORT      GPIOB
 #define SERVO_GPIO_RCC      RCC_APB2Periph_GPIOA
-
-
 #define SERVO_ANGLE_MIN         500     /* 0度 最小脉冲 */
 #define SERVO_ANGLE_MAX         2500    /* 180度 最大脉冲 */
 #define SWEEP_STEP              40
@@ -64,21 +56,16 @@
 #define SERVO_BOOST_PULSE       1620
 #define SERVO_BOOST_MS          0U
 #define SERVO_UPDATE_DIV        1U
-
 #define TEMP_THRESHOLD_ON_DEFAULT    30     /* 温度开启阈值 默认°C */
 #define TEMP_THRESHOLD_OFF_DEFAULT   29     /* 温度关闭阈值 默认°C */
 #define HUM_ALARM_THRESHOLD_DEFAULT  80     /* 湿度报警阈值 默认% */
 #define MQ2_ALARM_THRESHOLD_DEFAULT  500    /* MQ2报警阈值 默认ppm */
-
-
 #define MQ2_ADC_MAX             4095UL
 #define MQ2_RL_OHM              5000UL      /* 负载电阻 千欧 */
 #define MQ2_R0_OHM              10000UL     /* 标准空气电阻 千欧 */
 #define MQ2_CLEAN_AIR_TARGET    200UL       /* 清洁空气目标 ppm */
 #define MQ2_CALIB_SAMPLES       30U         /* 校准采样次数 */
 #define MQ2_REPORT_MAX          9999UL      /* 报告最大值 */
-
-
 #define LOOP_TICK_MS        20U
 #define TASK_SENSOR_MS      100U
 #define TASK_HUMAN_MS       100U
@@ -101,38 +88,27 @@
 #define NIGHT_BEEP_MS       3000U
 #define USE_RTC_CLOCK       0U
 #define SERIAL_PC_BRIDGE    1U
-
 /* ====================== MQTT Topic ====================== */
 #define MQTT_PUB_TOPIC  "attributes"
 #define MQTT_SUB_TOPIC  "attributes/push"
-
-
 static u8  Pub_Topic[]   = MQTT_PUB_TOPIC;
 static u8  Pub_Message[256];
 static u8  check_char[256];
-
 static u32 ppm              = 0;
 static u8  human_status     = 0;
 static u8  temp_threshold_on  = TEMP_THRESHOLD_ON_DEFAULT;
 static u8  temp_threshold_off = TEMP_THRESHOLD_OFF_DEFAULT;
 static u8  hum_alarm_threshold  = HUM_ALARM_THRESHOLD_DEFAULT;
 static u32 mq2_alarm_threshold  = MQ2_ALARM_THRESHOLD_DEFAULT;
-
 static u8  motor_status       = 0;     /* 0=停止, 1=运行 */
 static u8  motor_control_mode = 0;     /* 0=自动控制, 1=手动 */
-
-
 static u8  dht11_data[5]         = {0};
 static u16 mq2_raw               = 0;
 static u8  mq2_ready             = 0;
-
 static u8  remote_beep_active  = 0;
 static u8  remote_led_active   = 0;
-
 static u8  mqtt_send_pending   = 0;
 static u8  wifi_online         = 0;
-
-
 extern u32 system_timer;
 static u32 last_dht_time           = 0;
 static u32 last_human_check_time   = 0;
@@ -140,7 +116,6 @@ static u32 last_human_detect_time  = 0;
 static u32 last_mqtt_time          = 0;
 static u32 last_ui_time            = 0;
 static u32 last_wifi_retry_time    = 0;
-
 static u8  key1_latched    = 0;
 static u8  key0_latched    = 0;
 static u8  k_key_latched   = 0;
@@ -148,18 +123,15 @@ static u8  key_combo_latched = 0;
 static u8  key_level_ready = 0;
 static u8  key1_idle_level = 1;
 static u8  key0_idle_level = 1;
-
 /* WiFi 重试计数 */
 static u8  wifi_retry_count = 0;
 static u32 wifi_retry_delay = WIFI_RETRY_MS;
-
 /* OLED 显示模式 0=实时数据, 1=设置菜单, 2=设置调整, 3=系统状态, 4=网络信息 */
 static u8  oled_mode       = 0;
 static u8  menu_index      = 0;  // 主菜单索引
 static u8  sub_menu_index  = 0;  // 子菜单索引
 static u32 night_beep_until = 0;
 static u8  human_raw_prev   = 0;
-
 /* ====================== 函数声明 ====================== */
 static void Log_Print(const char *msg);
 static void Log_ResetReason(void);
@@ -181,17 +153,14 @@ static void Update_DisplayAndAlarm(void);
 static void Handle_Keys(void);
 static u8   JsonTryGetSwitch(const char *json, const char *key, u8 *out_value);
 static void JsonNormalizeForMatch(char *buf);
-
 static void Handle_WifiCommand(void);
-
+_Bool Wifi_FetchDownlinkFrame(u8 *out, u16 out_size, u16 *out_len);
 
 /* ====================== 日志/调试 ====================== */
-
 static void Log_Print(const char *msg)
 {
     USART1_SendStr((char *)msg, strlen(msg));
 }
-
 static void Log_Printf(const char *fmt, ...)
 {
     char buf[128];
@@ -201,7 +170,6 @@ static void Log_Printf(const char *fmt, ...)
     va_end(args);
     Log_Print(buf);
 }
-
 static void Log_ResetReason(void)
 {
     Log_Print("ResetCause:");
@@ -214,7 +182,6 @@ static void Log_ResetReason(void)
     Log_Print("\r\n");
     RCC_ClearFlag();
 }
-
 static void SerialBridge_Print(const char *json)
 {
 #if SERIAL_PC_BRIDGE
@@ -225,13 +192,10 @@ static void SerialBridge_Print(const char *json)
 }
 
 /* ====================== Wi-Fi 初始化 ====================== */
-
 static u8 Wifi_Bringup(void)
 {
     u8 i;
-
     DELAY_Nms(WIFI_BOOT_DELAY_MS);
-
     for (i = 0; i < WIFI_INIT_RETRY; i++)
     {
         Log_Print("[WiFi] Bringup...\r\n");
@@ -243,9 +207,7 @@ static u8 Wifi_Bringup(void)
             DELAY_Nms(300);
             continue;
         }
-
         WIFI_Init();
-
         if (TCP_Init() == 1)
         {
             Log_Print("[WiFi] TCP Connected\r\n");
@@ -253,11 +215,9 @@ static u8 Wifi_Bringup(void)
             mqtt_send_pending = 0;
             return 1;
         }
-
         Log_Print("[WiFi] TCP Retry...\r\n");
         DELAY_Nms(500);
     }
-
     Log_Print("[WiFi] TCP Connect Failed\r\n");
     mqtt_send_pending = 0;
     return 0;
@@ -298,7 +258,6 @@ static u8 IsNightPeriod(void)
 {
     u32 sec_of_day = GetSecondsOfDay();
     u8  hour = (u8)(sec_of_day / 3600UL);
-
     if (NIGHT_START_HOUR < NIGHT_END_HOUR)
         return (hour >= NIGHT_START_HOUR && hour < NIGHT_END_HOUR);
     return (hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR);
@@ -309,7 +268,6 @@ static u8 IsNightPeriod(void)
 static void Human_LED_Init(void)
 {
     GPIO_InitTypeDef GPIO_InitStructure;
-
     RCC_APB2PeriphClockCmd(HUMAN_LED_RCC, ENABLE);
     GPIO_InitStructure.GPIO_Pin   = HUMAN_LED_PIN;
     GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_Out_PP;
@@ -336,7 +294,6 @@ static void BEEP_State(u8 state)
 static void K_Key_Init(void)
 {
     GPIO_InitTypeDef GPIO_InitStructure;
-
     RCC_APB2PeriphClockCmd(K_KEY_RCC, ENABLE);
     GPIO_InitStructure.GPIO_Pin   = K_KEY_PIN;
     GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_IPD;
@@ -346,7 +303,6 @@ static void K_Key_Init(void)
 static void Motor_Init(void)
 {
     GPIO_InitTypeDef GPIO_InitStructure;
-
     RCC_APB2PeriphClockCmd(MOTOR_SIG_RCC, ENABLE);
     GPIO_InitStructure.GPIO_Pin   = MOTOR_SIG_PIN;
     GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_Out_PP;
@@ -371,7 +327,6 @@ static void Motor_Control(u8 status, u8 mode)
         GPIO_ResetBits(MOTOR_SIG_PORT, MOTOR_SIG_PIN);  // 开启风扇（JY003 信号线低电平开启）
         Log_Print("[Fan] ON\r\n");
     }
-
     motor_status = status;
     motor_control_mode = mode;
 }
@@ -384,10 +339,8 @@ static void Send_MQTT_Process(void)
 {   
     int  pkt_len;
     char at_buf[32];
-
     if (!mqtt_send_pending)
         return;
-
     /* 构建包含传感器数据和人体检测结果的 JSON 上报内容 */
     snprintf((char *)Pub_Message, sizeof(Pub_Message),
              "{\"TEMP\":%d,\"HUM\":%d,\"MQ2\":%lu,\"HUMAN\":%s}",
@@ -416,7 +369,7 @@ static void Send_MQTT_Process(void)
     snprintf(at_buf, sizeof(at_buf), "AT+CIPSEND=%d\r\n", pkt_len);
     if (cmdAT(at_buf, "OK", ">", strlen(at_buf)))
     {
-        if (Wifi_SendRaw(MQTT_SEND_RealtimeData, pkt_len, "SEND OK", NULL))
+        if (Wifi_SendRaw(MQTT_SEND_RealtimeData, pkt_len, "SEND OK", "SENDOK"))
         {
             Log_Print("MQTT Pub OK\r\n");
             mqtt_send_pending = 0;  /* 成功后才清除发送标志 */
@@ -438,7 +391,6 @@ static void Update_SensorData(void)
 {
     u32 mq2_corrected;
     u8  i;
-
     /* 读取 DHT11传感器数据 尝试3次 */
     for (i = 0; i < 3; i++)
     {
@@ -450,7 +402,6 @@ static void Update_SensorData(void)
         }
         DELAY_Nms(20);
     }
-
     /* 读取 MQ2 从mq2.c 获取 ADC 原始值 */
     mq2_raw = MQ2_GetData();
     ppm    = mq2_raw;   /* 直接把 ADC 当成 PPM 上报 */
@@ -494,9 +445,7 @@ static void Update_DisplayAndAlarm(void)
         OLED_Clear(0);
         prev_oled_mode = oled_mode;
     }
-
     FormatClockString(time_str, sizeof(time_str));
-
     /* 模式 0：显示实时数据 */
     if (oled_mode == 0)
     {
@@ -576,7 +525,6 @@ static void Update_DisplayAndAlarm(void)
 }
 
 /* ====================== 按键处理 ====================== */
-
 static void Handle_Keys(void)
 {
     u8 key1_now = GPIO_ReadInputDataBit(KEY1_PORT, KEY1_PIN);
@@ -707,7 +655,6 @@ static u8 JsonTryGetSwitch(const char *json, const char *key, u8 *out_value)
 
     if (!json || !key || !out_value)
         return 0;
-
     snprintf(pat_true,      sizeof(pat_true),      "\"%s\":true",    key);
     snprintf(pat_false,     sizeof(pat_false),     "\"%s\":false",   key);
     snprintf(pat_one,       sizeof(pat_one),       "\"%s\":1",       key);
@@ -716,7 +663,6 @@ static u8 JsonTryGetSwitch(const char *json, const char *key, u8 *out_value)
     snprintf(pat_str_false, sizeof(pat_str_false), "\"%s\":\"false\"", key);
     snprintf(pat_str_one,   sizeof(pat_str_one),   "\"%s\":\"1\"",   key);
     snprintf(pat_str_zero,  sizeof(pat_str_zero),  "\"%s\":\"0\"",   key);
-
     if (strstr(json, pat_true)  || strstr(json, pat_one) ||
         strstr(json, pat_str_true) || strstr(json, pat_str_one))
     {
@@ -754,85 +700,60 @@ static void JsonNormalizeForMatch(char *buf)
 
 static void Handle_WifiCommand(void)
 {
-    u16 copy_len;
-    char *json;
-    u8 value;
-
-    if (!wifiRecvOver)
+    u16 copy_len = 0;
+    u8  cmd_val;
+  if (!Wifi_FetchDownlinkFrame(check_char, sizeof(check_char), &copy_len))
         return;
 
-    copy_len = recvCnt;
-    if (copy_len >= sizeof(check_char))
-        copy_len = sizeof(check_char) - 1;
+  if (copy_len == 0)
+        return;
+  JsonNormalizeForMatch((char *)check_char);
+    Log_Print("Downlink:");
+    Log_Print((char *)check_char);
+    Log_Print("\r\n");
+	 cmd_val = 0;
+    if (JsonTryGetSwitch((char *)check_char, "BEEP", &cmd_val))
+        remote_beep_active = cmd_val;
 
-    memcpy(check_char, (void*)wifiRecvBuf, copy_len);
-    check_char[copy_len] = '\0';
-
-    //Log_Print("RAW RECV:\r\n");
-    //Log_Print((char *)check_char);
-    //Log_Print("\r\n");
-
-    /* 直接找 JSON 起始位置 */
-    json = strstr((char *)check_char, "{\"");
-    if (json != NULL)
+		    cmd_val = 0;
+    if (JsonTryGetSwitch((char *)check_char, "LED", &cmd_val))
     {
-        JsonNormalizeForMatch(json);
-
-        if (JsonTryGetSwitch(json, "LED", &value))
-        {
-            if (value) BOARD_LED_ON();
-            else BOARD_LED_OFF();
-        }
-
-        if (JsonTryGetSwitch(json, "BEEP", &value))
-        {
-            remote_beep_active = value;
-            if (value) BEEP_ON();
-            else BEEP_OFF();
-        }
-
-        if (JsonTryGetSwitch(json, "FAN", &value))
-        {
-            Motor_Control(value, 1);
-        }
-
-        Log_Print("Downlink Parsed OK\r\n");
+        remote_led_active = cmd_val;
+        if (remote_led_active)
+            BOARD_LED_ON();
+        else
+            BOARD_LED_OFF();
     }
-
-    memset((void *)wifiRecvBuf, 0, WIFI_RECV_BUF_SIZE);
-    recvCnt = 0;
-    wifiRecvOver = 0;
+		    cmd_val = 0;
+    if (JsonTryGetSwitch((char *)check_char, "SERVO", &cmd_val) ||
+        JsonTryGetSwitch((char *)check_char, "FAN", &cmd_val) ||
+        JsonTryGetSwitch((char *)check_char, "MOTOR", &cmd_val))
+    {
+        Motor_Control(cmd_val, 1);
+    }
 }
 /* ====================== 主函数 ====================== */
 int main(void)
 {
     /* ---------- 系统时钟和中断优先级 ---------- */
     NVIC_SetPriorityGrouping(2);
-
     /* ---------- 硬件初始化 ---------- */
     BEEP_OFF();
-	  
 	  LED_Config();
     KEY_Config();
     USART1_Config(115200);          /* 注意：这里调用 USART1_Config 实际是 USART1_Init */
     DELAY_Nms(100);
-
     Log_Print("\r\n\r\n----BOOT----\r\n");
     Log_ResetReason();
-
     SoftIIC_Config();
     OLED_Config();
     OLED_Clear(0);
-
     /* OLED 显示标签 */
     OLED_ShowString(0, 0, (u8 *)"TIME:");
     OLED_ShowString(2, 0, (u8 *)"TEMP:");
     OLED_ShowString(4, 0, (u8 *)"HUM :");
     OLED_ShowString(6, 0, (u8 *)"MQ2 :");
-
     BOARD_LED_OFF();
-
-
     DHT11_Config();    
     ADCx_Init();                    /* MQ2 传感器 ADC 初始化，必须在 MQ2_Init 之前调用 */
     MQ2_Init();
@@ -840,18 +761,14 @@ int main(void)
     Motor_Init();
     Human_LED_Init();
     K_Key_Init();
-
     /* 首次更新传感器数据，开机时显示全 0 */
     Update_SensorData();
-
     Log_Print("System Init OK\r\n");
     DELAY_Nms(BOOT_STABILIZE_MS);
-
     /* ---------- Wi-Fi 初始化 ---------- */
     wifi_online = 0;
     last_wifi_retry_time = system_timer;
     Log_Print("Local Mode Start\r\n");
-
 #if WIFI_AUTO_BRINGUP
     wifi_online = Wifi_Bringup();
 #endif
@@ -861,17 +778,14 @@ int main(void)
     {
         DELAY_Nms(LOOP_TICK_MS);
         system_timer += LOOP_TICK_MS;
-
         /* --- 传感器数据更新 每500ms --- */
         if (IsTimeDue(system_timer, &last_dht_time, TASK_SENSOR_MS))
-            Update_SensorData();
-
+           Update_SensorData();
         /* --- 人体检测 每100ms --- */
         if (IsTimeDue(system_timer, &last_human_check_time, TASK_HUMAN_MS))
         {
             u8 human_raw = SR602_Detect() ? 1 : 0;
             human_status = human_raw;
-
             if (!human_raw)
             {
                 // last_human_low_time = system_timer;  // 删除未使用
@@ -888,13 +802,11 @@ int main(void)
             }
             human_raw_prev = human_raw;
         }
-
         /* 人体检测 LED 控制，保持 HUMAN_LED_HOLD_MS */
         if ((system_timer - last_human_detect_time) < HUMAN_LED_HOLD_MS)
             HUMAN_LED_ON();
         else
             HUMAN_LED_OFF();
-
         /* --- 自动控制电机 --- */
         if (motor_control_mode == 0)
         {
@@ -903,14 +815,11 @@ int main(void)
             else if (dht11_data[2] <= temp_threshold_off && motor_status == 1)
                 Motor_Control(0, 0);
         }
-
         /* --- OLED 刷新 + 报警控制 每200ms --- */
         if (IsTimeDue(system_timer, &last_ui_time, TASK_UI_MS))
             Update_DisplayAndAlarm();
-
         /* --- 按键扫描 --- */
         Handle_Keys();
-
         /* --- MQTT 发送 修复3：预热 30s 后每 15s 发送一次 --- */
         if (wifi_online &&
             system_timer >= MQTT_WARMUP_MS &&
@@ -920,20 +829,17 @@ int main(void)
             if (!mqtt_send_pending)
                 mqtt_send_pending = 1;
         }
-
         /* --- Wi-Fi 命令处理 --- */
         if (wifi_online)
         {
           {
-            if (wifiRecvOver)
-            Handle_WifiCommand();
 
-            if (!wifiRecvOver)
+            Handle_WifiCommand();
             Send_MQTT_Process();
           }
 
-            wifi_retry_count = 0;  // 閲嶇疆閲嶈繛璁℃暟
-            wifi_retry_delay = WIFI_RETRY_MS;  // 閲嶇疆寤惰繜
+            wifi_retry_count = 0;  
+            wifi_retry_delay = WIFI_RETRY_MS;  
         }
         else
         {
@@ -950,11 +856,9 @@ int main(void)
                 else
                 {
                     wifi_retry_count++;
-                    // 指数退避，最多 5 分钟
                     wifi_retry_delay = WIFI_RETRY_MS * (1 << (wifi_retry_count > 4 ? 4 : wifi_retry_count));
                     if (wifi_retry_delay > 300000UL) wifi_retry_delay = 300000UL;
                     Log_Print("WiFi Retry Failed, next in ");
-                    // 鍙?浠ユ坊鍔犲欢杩熸樉绀?
                 }
             }
 #endif
